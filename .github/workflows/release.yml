@@ -33,6 +33,7 @@ jobs:
           uv run mypy --strict src tests
           uv run pytest --strict-markers -W error --cov=evalforge_maestro --cov-branch --cov-fail-under=85
           uv run pytest --strict-markers -W error --cov=evalforge_maestro.metrics --cov-branch --cov-fail-under=100 tests/unit/test_metrics.py tests/unit/test_ir_metrics.py tests/contract/test_metric_formulas.py
+          uv run pytest --strict-markers -W error --cov=evalforge_maestro.regression.gate --cov-branch --cov-fail-under=100 tests/unit/test_quality_gate.py
           uv run pytest --strict-markers -W error -m "gate_determinism or gate_immutability"
           uv export --frozen --no-emit-project --quiet -o "$RUNNER_TEMP/requirements.txt"
           uv run pip-audit -r "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip --strict

@@ -61,6 +61,16 @@ def round_score(value: float) -> float:
     return 0.0 if rounded == 0.0 else rounded
 
 
+def round_delta(value: float) -> float:
+    """Validate finiteness, zero near-zero noise, and round signed values to 6 decimals."""
+    if not math.isfinite(value):
+        raise ValueError(f"Regression delta or slope must be finite, got {value!r}")
+    if abs(value) <= FLOAT_EPSILON:
+        return 0.0
+    rounded = round(float(value), SCORE_ROUND_DECIMALS)
+    return 0.0 if rounded == 0.0 else rounded
+
+
 def canonical_json_str(payload: Any, *, pretty: bool = False) -> str:
     """Serialize payload to canonical JSON with sorted keys and LF endings."""
     if pretty:

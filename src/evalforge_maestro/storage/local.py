@@ -8,8 +8,9 @@ import re
 import sys
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO
 
@@ -21,19 +22,25 @@ from evalforge_maestro._canonical import (
     redact_secrets,
 )
 from evalforge_maestro.exceptions import ImmutabilityError, StorageError
-from evalforge_maestro.types import CaseEvaluationRecord, RunManifestEntry, RunRecord
+from evalforge_maestro.types import (
+    BaselineEntry,
+    BaselineRegistry,
+    CaseEvaluationRecord,
+    RunManifestEntry,
+    RunRecord,
+)
 
-_SAFE_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _PROCESS_APPEND_LOCK = threading.Lock()
 
 
-def _validate_run_id(run_id: str) -> str:
-    if not _SAFE_RUN_ID_RE.match(run_id) or ".." in run_id:
+def _validate_safe_identifier(value: str, *, label: str) -> str:
+    if not _SAFE_ID_RE.match(value) or ".." in value:
         raise StorageError(
-            f"Invalid run_id {run_id!r}: must match ^[A-Za-z0-9][A-Za-z0-9._-]{{0,127}}$ "
+            f"Invalid {label} {value!r}: must match ^[A-Za-z0-9][A-Za-z0-9._-]{{0,127}}$ "
             "and must not contain '..'"
         )
-    return run_id
+    return value
 
 
 def _ensure_private_dir(path: Path) -> None:
@@ -85,17 +92,21 @@ class LocalRunStore:
 
     def checkpoint_path(self, run_id: str) -> Path:
         """Return path to incremental checkpoint journal for run_id."""
-        safe_id = _validate_run_id(run_id)
+        safe_id = _validate_safe_identifier(run_id, label="run_id")
         return self._root / "tmp" / f"{safe_id}.jsonl"
 
     def run_path(self, run_id: str) -> Path:
         """Return path to immutable RunRecord JSON artifact for run_id."""
-        safe_id = _validate_run_id(run_id)
+        safe_id = _validate_safe_identifier(run_id, label="run_id")
         return self._root / "runs" / f"{safe_id}.json"
 
     def manifest_path(self) -> Path:
         """Return path to append-only manifest ledger JSONL."""
         return self._root / "manifest.jsonl"
+
+    def baseline_path(self) -> Path:
+        """Return path to canonical pinned baseline registry JSON."""
+        return self._root / "baselines.json"
 
     def append_checkpoint(self, run_id: str, record: CaseEvaluationRecord) -> None:
         """Append one canonical CaseEvaluationRecord line to the incremental temp journal."""
@@ -213,3 +224,119 @@ class LocalRunStore:
         except OSError as exc:
             raise StorageError(f"Failed reading manifest {target}: {exc}") from exc
         return entries
+
+    def _atomic_replace_bytes(self, target: Path, raw_bytes: bytes) -> None:
+        _ensure_private_dir(self._root)
+        _ensure_private_dir(target.parent)
+        tmp_path = target.parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(raw_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, target)
+        except OSError as exc:
+            raise StorageError(f"Failed writing {target}: {exc}") from exc
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        if os.name == "posix":
+            os.chmod(target, 0o600)
+
+    def load_baselines(self) -> BaselineRegistry:
+        """Load and schema-validate the pinned BaselineRegistry."""
+        target = self.baseline_path()
+        if not target.exists():
+            return BaselineRegistry()
+        try:
+            raw = target.read_text(encoding="utf-8")
+            parsed = json.loads(raw)
+            return BaselineRegistry.model_validate(parsed)
+        except (OSError, json.JSONDecodeError, ValidationError) as exc:
+            raise StorageError(f"Failed loading baseline registry from {target}: {exc}") from exc
+
+    def _save_baselines(self, registry: BaselineRegistry) -> None:
+        sanitized = redact_secrets(registry.model_dump(mode="json"))
+        raw_bytes = canonical_json_bytes(sanitized, pretty=True)
+        self._atomic_replace_bytes(self.baseline_path(), raw_bytes)
+
+    def pin_baseline(
+        self,
+        run_id: str,
+        *,
+        name: str = "default",
+        note: str | None = None,
+        tags: Sequence[str] | None = None,
+        overwrite: bool = False,
+    ) -> BaselineEntry:
+        """Validate run_id and pin an immutable baseline pointer atomically."""
+        safe_name = _validate_safe_identifier(name, label="baseline name")
+        record = self.load_run(run_id)
+        cleaned_tags = list(dict.fromkeys(tags)) if tags else []
+        entry = BaselineEntry(
+            name=safe_name,
+            run_id=record.run_id,
+            pinned_at=datetime.now(timezone.utc),
+            note=note,
+            tags=cleaned_tags,
+            dataset_id=record.dataset_id,
+            dataset_version=record.dataset_version,
+            dataset_fingerprint=record.dataset_fingerprint,
+            system_version=record.system_version,
+            model_id=record.model_id,
+            config_fingerprint=record.config_fingerprint,
+            judge_config_fingerprint=record.judge_config_fingerprint,
+            metric_versions=dict(record.metric_versions),
+            aggregate_scores={
+                metric_id: summary.mean_score for metric_id, summary in record.aggregates.items()
+            },
+        )
+        with _PROCESS_APPEND_LOCK:
+            registry = self.load_baselines()
+            if safe_name in registry.baselines and not overwrite:
+                existing = registry.baselines[safe_name]
+                raise ImmutabilityError(
+                    f"Baseline {safe_name!r} is already pinned to run {existing.run_id!r}; "
+                    "pass overwrite=True to replace the alias pointer."
+                )
+            updated_map = dict(registry.baselines)
+            updated_map[safe_name] = entry
+            self._save_baselines(BaselineRegistry(baselines=updated_map))
+        return entry
+
+    def get_baseline(self, name: str = "default") -> BaselineEntry:
+        """Resolve one BaselineEntry by name or raise StorageError if absent."""
+        safe_name = _validate_safe_identifier(name, label="baseline name")
+        registry = self.load_baselines()
+        if safe_name not in registry.baselines:
+            raise StorageError(f"Baseline {safe_name!r} not found in {self.baseline_path()}")
+        return registry.baselines[safe_name]
+
+    def list_baselines(self) -> list[BaselineEntry]:
+        """Return all pinned BaselineEntry items sorted deterministically by name."""
+        registry = self.load_baselines()
+        return [registry.baselines[key] for key in sorted(registry.baselines)]
+
+    def unpin_baseline(self, name: str = "default") -> BaselineEntry:
+        """Remove a baseline alias from baselines.json without deleting underlying runs."""
+        safe_name = _validate_safe_identifier(name, label="baseline name")
+        with _PROCESS_APPEND_LOCK:
+            registry = self.load_baselines()
+            if safe_name not in registry.baselines:
+                raise StorageError(f"Baseline {safe_name!r} not found in {self.baseline_path()}")
+            updated_map = dict(registry.baselines)
+            removed = updated_map.pop(safe_name)
+            self._save_baselines(BaselineRegistry(baselines=updated_map))
+        return removed
+
+    def load_baseline_run(self, name: str = "default") -> RunRecord:
+        """Resolve a baseline alias and load its immutable RunRecord."""
+        entry = self.get_baseline(name)
+        return self.load_run(entry.run_id)
+
+    def load_runs(self, run_ids: Sequence[str] | None = None) -> list[RunRecord]:
+        """Load persisted RunRecord payloads (manifest order when run_ids is None)."""
+        target_ids = (
+            [entry.run_id for entry in self.read_manifest()] if run_ids is None else list(run_ids)
+        )
+        return [self.load_run(run_id) for run_id in target_ids]

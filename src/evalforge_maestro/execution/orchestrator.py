@@ -355,6 +355,7 @@ class EvaluationOrchestrator:
             system_version=adapter.system_version,
             model_id=adapter.model_id,
             config_fingerprint=adapter.config_fingerprint,
+            judge_config_fingerprint=self._config.judge_config_fingerprint,
             metric_versions=metric_versions,
             seed=self._config.seed,
             aggregates=aggregates,

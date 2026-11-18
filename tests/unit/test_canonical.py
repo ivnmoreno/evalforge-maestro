@@ -13,6 +13,7 @@ from evalforge_maestro._canonical import (
     canonical_json_str,
     canonical_sha256,
     redact_secrets,
+    round_delta,
     round_score,
 )
 
@@ -27,6 +28,20 @@ def test_round_score_precision_and_epsilon_clamping() -> None:
         round_score(float("nan"))
     with pytest.raises(ValueError, match="finite"):
         round_score(float("inf"))
+
+
+def test_round_delta_precision_signed_and_negative_zero_normalization() -> None:
+    assert round_delta(-0.123456789) == -0.123457
+    assert round_delta(0.8 - 0.5) == 0.3
+    assert round_delta(-0.0) == 0.0
+    assert math.copysign(1.0, round_delta(-0.0)) == 1.0
+    assert math.copysign(1.0, round_delta(-1e-12)) == 1.0
+    assert round_delta(1e-12) == 0.0
+
+    with pytest.raises(ValueError, match="finite"):
+        round_delta(float("nan"))
+    with pytest.raises(ValueError, match="finite"):
+        round_delta(float("-inf"))
 
 
 def test_canonical_json_and_hashing_are_key_order_invariant() -> None:
