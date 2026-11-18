@@ -89,9 +89,24 @@ def test_library_ast_import_and_logging_boundaries() -> None:
         # Leaf modules types.py, exceptions.py, _canonical.py must not import domain subpackages
         if rel in {"types.py", "exceptions.py", "_canonical.py"}:
             for mod in imports:
-                for sub in ("datasets", "adapters", "metrics", "execution", "storage"):
+                for sub in (
+                    "datasets",
+                    "adapters",
+                    "metrics",
+                    "execution",
+                    "storage",
+                    "regression",
+                ):
                     assert not mod.startswith(f"evalforge_maestro.{sub}"), (
                         f"Leaf module {rel} must not import {mod!r}"
+                    )
+
+        # Pure computational modules (regression/, metrics/) never import I/O/adapters
+        if rel.startswith(("regression/", "metrics/")):
+            for mod in imports:
+                for forbidden_sub in ("adapters", "execution", "storage"):
+                    assert not mod.startswith(f"evalforge_maestro.{forbidden_sub}"), (
+                        f"Pure module {rel} must not import {mod!r}"
                     )
 
         # Core/domain modules must never import docpipe_maestro, langchain, or llama_index

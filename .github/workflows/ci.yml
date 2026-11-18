@@ -55,6 +55,12 @@ jobs:
           tests/unit/test_ir_metrics.py
           tests/contract/test_metric_formulas.py
 
+      - name: QualityGate 100% branch coverage
+        run: >
+          uv run pytest --strict-markers -W error
+          --cov=evalforge_maestro.regression.gate --cov-branch --cov-fail-under=100
+          tests/unit/test_quality_gate.py
+
       - name: Mandatory release gate markers
         run: uv run pytest --strict-markers -W error -m "gate_determinism or gate_immutability"
 

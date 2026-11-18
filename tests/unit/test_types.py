@@ -27,22 +27,32 @@ from evalforge_maestro.exceptions import (
 )
 from evalforge_maestro.types import (
     AggregateMetricSummary,
+    AnomalyFlag,
+    AnomalyScope,
+    AnomalySeverity,
+    AnomalyType,
     CaseCriteria,
     CaseEvaluationRecord,
     CaseMetadata,
     CaseSplit,
+    ComparisonDirection,
+    DriftCategory,
+    DriftWarning,
     EvaluationCase,
     ExecutionResult,
     ExpectedContextItem,
+    GateDecision,
     MetricMetadata,
     MetricResult,
     MetricStatus,
     OrchestratorConfig,
+    QualityGatePolicy,
     RAGExtractorConfig,
     RetrievedChunk,
     RunManifestEntry,
     RunRecord,
     TokenUsage,
+    TrendDirection,
 )
 
 
@@ -227,10 +237,12 @@ def test_run_record_manifest_orchestrator_config_and_schema_parity() -> None:
     )
     assert meta.metric_id == "exact_match"
 
-    # Parity check against specs/001-evaluation-foundation/contracts/schemas-v1.json
+    # Parity check against M1 schemas overlaid with additive M3 RunRecord / RunManifestEntry fields
     schema_path = Path("specs/001-evaluation-foundation/contracts/schemas-v1.json")
     contract_schema: dict[str, Any] = json.loads(schema_path.read_text(encoding="utf-8"))
-    defs = contract_schema["$defs"]
+    m3_path = Path("specs/003-experiment-regression-engine/contracts/schemas-v1.json")
+    m3_schema: dict[str, Any] = json.loads(m3_path.read_text(encoding="utf-8"))
+    defs = {**contract_schema["$defs"], **m3_schema["$defs"]}
 
     def _validate_def(def_name: str, payload: dict[str, Any]) -> None:
         sub_schema = {"$schema": contract_schema["$schema"], "$defs": defs, **defs[def_name]}
@@ -243,6 +255,18 @@ def test_run_record_manifest_orchestrator_config_and_schema_parity() -> None:
     _validate_def("CaseEvaluationRecord", case_rec.model_dump(mode="json"))
     _validate_def("RunRecord", run.model_dump(mode="json"))
     _validate_def("RunManifestEntry", manifest.model_dump(mode="json"))
+
+    # Legacy M1 serialized payloads omitting M3 optional fields remain readable
+    legacy_run_json = run.model_dump(mode="json")
+    legacy_run_json.pop("judge_config_fingerprint")
+    assert RunRecord.model_validate(legacy_run_json).judge_config_fingerprint is None
+
+    legacy_manifest_json = manifest.model_dump(mode="json")
+    legacy_manifest_json.pop("model_id")
+    legacy_manifest_json.pop("judge_config_fingerprint")
+    loaded_legacy_manifest = RunManifestEntry.model_validate(legacy_manifest_json)
+    assert loaded_legacy_manifest.model_id is None
+    assert loaded_legacy_manifest.judge_config_fingerprint is None
 
 
 def test_m2_expected_context_retrieved_chunk_rag_extractor_and_schema_parity() -> None:
@@ -329,3 +353,92 @@ def test_m2_expected_context_retrieved_chunk_rag_extractor_and_schema_parity() -
         case.model_dump(mode="json")["expected_context"],
     )
     _validate_m2("RetrievedChunk", chunk.model_dump(mode="json"))
+
+
+def test_m3_enums_drift_anomaly_and_quality_gate_policy_contracts() -> None:
+    assert {d.value for d in GateDecision} == {"PASS", "FAIL", "WARNING", "INCONCLUSIVE"}
+    assert {d.value for d in ComparisonDirection} == {
+        "IMPROVED",
+        "REGRESSED",
+        "UNCHANGED",
+        "ADDED",
+        "REMOVED",
+        "INCONCLUSIVE",
+    }
+    assert {d.value for d in TrendDirection} == {
+        "IMPROVING",
+        "STABLE",
+        "DEGRADING",
+        "INSUFFICIENT_DATA",
+    }
+    assert len(DriftCategory) == 6
+    assert len(AnomalyType) == 5
+
+    dw = DriftWarning(
+        category=DriftCategory.JUDGE_CONFIG,
+        baseline_run_id="r1",
+        candidate_run_id="r2",
+        baseline_value="fp1",
+        candidate_value="fp2",
+        explanation="Judge config fingerprint changed",
+    )
+    assert dw.category == DriftCategory.JUDGE_CONFIG
+    with pytest.raises(ValidationError):
+        DriftWarning(category=DriftCategory.METRIC_VERSION, explanation="   ")
+    with pytest.raises(ValidationError):
+        DriftWarning(
+            category=DriftCategory.METRIC_VERSION,
+            baseline_value=float("nan"),
+            explanation="bad",
+        )
+
+    af = AnomalyFlag(
+        anomaly_type=AnomalyType.METRIC_DISAGREEMENT,
+        severity=AnomalySeverity.WARNING,
+        scope=AnomalyScope.CASE,
+        case_id=" c1 ",
+        metric_ids=["exact_match", "precision_at_k"],
+        spread=0.8000001,
+        explanation="Case metric spread > 0.3",
+    )
+    assert af.case_id == "c1"
+    assert af.spread == 0.8
+    with pytest.raises(ValidationError):
+        AnomalyFlag(
+            anomaly_type=AnomalyType.METRIC_DISAGREEMENT,
+            severity=AnomalySeverity.WARNING,
+            scope=AnomalyScope.CASE,
+            explanation="Missing case_id",
+        )
+    with pytest.raises(ValidationError):
+        AnomalyFlag(
+            anomaly_type=AnomalyType.METRIC_DISAGREEMENT,
+            severity=AnomalySeverity.WARNING,
+            scope=AnomalyScope.RUN,
+            spread=True,
+            explanation="Bool rejected",
+        )
+
+    policy = QualityGatePolicy(
+        min_score=0.75,
+        min_metric_scores={"exact_match": 0.9},
+        max_metric_regression_drops={"recall_at_k": 0.02},
+        max_regressed_cases=1,
+    )
+    assert policy.max_regression_drop == 0.05
+    assert policy.disagreement_threshold == 0.3
+    assert policy.case_drop_warning_threshold == 0.25
+    assert policy.trend_slope_threshold == 0.01
+    assert policy.max_inconclusive_rate == 0.1
+    assert policy.fail_on_mandatory_regression is True
+
+    with pytest.raises(ValidationError):
+        QualityGatePolicy(max_regression_drop=True)
+    with pytest.raises(ValidationError):
+        QualityGatePolicy(max_regressed_cases=True)
+    with pytest.raises(ValidationError):
+        QualityGatePolicy(trend_slope_threshold=0.0)
+    with pytest.raises(ValidationError):
+        QualityGatePolicy(min_metric_scores={" ": 0.5})
+    with pytest.raises(ValidationError):
+        QualityGatePolicy(min_metric_scores={"m": 1.2})

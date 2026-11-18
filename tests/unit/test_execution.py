@@ -12,6 +12,7 @@ from evalforge_maestro.adapters import CallableAdapter
 from evalforge_maestro.datasets import DatasetEngine
 from evalforge_maestro.exceptions import ExecutionError, MemoryLimitExceededError
 from evalforge_maestro.execution import EvaluationOrchestrator
+from evalforge_maestro.storage import LocalRunStore
 from evalforge_maestro.types import (
     EvaluationCase,
     ExecutionResult,
@@ -206,3 +207,23 @@ def test_metric_exception_isolation_and_structured_truncation(tmp_path: Path) ->
     assert len(run.case_results[0].execution.output) == 12
     assert orch.config.max_context_chars == 12
     assert orch.storage_root == tmp_path / ".evalforge"
+
+
+def test_orchestrator_propagates_judge_config_fingerprint(tmp_path: Path) -> None:
+    ds = DatasetEngine([{"id": "c1", "input": "q", "reference": "ok"}])
+    fp = "f" * 64
+    orch = EvaluationOrchestrator(
+        config=OrchestratorConfig(judge_config_fingerprint=fp),
+        storage_root=tmp_path / ".evalforge",
+    )
+    run = orch.run(
+        ds,
+        CallableAdapter(lambda _: "ok", model_id="m-1"),
+        [],
+        run_id="run-judge-fp",
+    )
+    assert run.judge_config_fingerprint == fp
+    manifest = LocalRunStore(tmp_path / ".evalforge").read_manifest()
+    assert len(manifest) == 1
+    assert manifest[0].judge_config_fingerprint == fp
+    assert manifest[0].model_id == "m-1"

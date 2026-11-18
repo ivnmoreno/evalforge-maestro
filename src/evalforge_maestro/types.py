@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 from enum import Enum
@@ -11,7 +12,7 @@ from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-from evalforge_maestro._canonical import round_score
+from evalforge_maestro._canonical import round_delta, round_score
 
 SCHEMA_VERSION: Literal["1.0"] = "1.0"
 _T = TypeVar("_T")
@@ -25,6 +26,70 @@ class MetricStatus(str, Enum):
     WARNING = "WARNING"
     INCONCLUSIVE = "INCONCLUSIVE"
     NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class GateDecision(str, Enum):
+    """Exclusive release acceptance decisions emitted by QualityGate."""
+
+    PASS = "PASS"  # noqa: S105  # GateDecision literal, not a credential
+    FAIL = "FAIL"
+    WARNING = "WARNING"
+    INCONCLUSIVE = "INCONCLUSIVE"
+
+
+class ComparisonDirection(str, Enum):
+    """Directional status for aggregate and case-level metric comparisons."""
+
+    IMPROVED = "IMPROVED"
+    REGRESSED = "REGRESSED"
+    UNCHANGED = "UNCHANGED"
+    ADDED = "ADDED"
+    REMOVED = "REMOVED"
+    INCONCLUSIVE = "INCONCLUSIVE"
+
+
+class TrendDirection(str, Enum):
+    """Directional classification for sliding window trend trajectories."""
+
+    IMPROVING = "IMPROVING"
+    STABLE = "STABLE"
+    DEGRADING = "DEGRADING"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+
+
+class DriftCategory(str, Enum):
+    """Measurement and provenance comparability drift categories."""
+
+    DATASET_FINGERPRINT = "DATASET_FINGERPRINT"
+    METRIC_VERSION = "METRIC_VERSION"
+    METRIC_SET = "METRIC_SET"
+    JUDGE_CONFIG = "JUDGE_CONFIG"
+    DATASET_CAPPED = "DATASET_CAPPED"
+    CASE_SET_MISMATCH = "CASE_SET_MISMATCH"
+
+
+class AnomalyType(str, Enum):
+    """Anti-masking and evidence-hygiene anomaly classes."""
+
+    METRIC_DISAGREEMENT = "METRIC_DISAGREEMENT"
+    AGGREGATE_MASKED_DROP = "AGGREGATE_MASKED_DROP"
+    MANDATORY_CASE_FAILURE = "MANDATORY_CASE_FAILURE"
+    INCONCLUSIVE_SPIKE = "INCONCLUSIVE_SPIKE"
+    DATASET_CAPPED = "DATASET_CAPPED"
+
+
+class AnomalySeverity(str, Enum):
+    """Advisory or blocking severity level assigned to an AnomalyFlag."""
+
+    WARNING = "WARNING"
+    FAIL = "FAIL"
+
+
+class AnomalyScope(str, Enum):
+    """Granularity at which an anomaly occurred."""
+
+    RUN = "RUN"
+    CASE = "CASE"
 
 
 class CaseSplit(str, Enum):
@@ -62,6 +127,30 @@ def _ensure_non_empty_str(value: str, *, field_name: str) -> str:
     if not stripped:
         raise ValueError(f"{field_name} must be a non-empty string")
     return stripped
+
+
+def _validate_optional_str(value: str | None, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _ensure_non_empty_str(value, field_name=field_name)
+
+
+def _validate_bounded_score_map(value: Any, *, field_name: str) -> Any:
+    if not isinstance(value, dict):
+        return value
+    validated: dict[str, float] = {}
+    for metric_id, score in value.items():
+        if not isinstance(metric_id, str):
+            raise ValueError(f"{field_name} keys must be non-empty strings")
+        cleaned_key = _ensure_non_empty_str(metric_id, field_name=field_name)
+        _reject_bool_number(score, field_name=f"{field_name}[{cleaned_key!r}]")
+        rounded = round_score(float(score))
+        if not (0.0 <= rounded <= 1.0):
+            raise ValueError(
+                f"{field_name}[{cleaned_key!r}] must be within [0.0, 1.0], got {rounded}"
+            )
+        validated[cleaned_key] = rounded
+    return validated
 
 
 class _StrictModel(BaseModel):
@@ -406,6 +495,7 @@ class RunRecord(_StrictModel):
     system_version: str | None = None
     model_id: str | None = None
     config_fingerprint: str | None = None
+    judge_config_fingerprint: str | None = None
     metric_versions: dict[str, str]
     seed: int | None = None
     aggregates: dict[str, AggregateMetricSummary]
@@ -418,6 +508,11 @@ class RunRecord(_StrictModel):
     @classmethod
     def _validate_non_empty(cls, value: str) -> str:
         return _ensure_non_empty_str(value, field_name="RunRecord")
+
+    @field_validator("judge_config_fingerprint")
+    @classmethod
+    def _validate_judge_fingerprint(cls, value: str | None) -> str | None:
+        return _validate_optional_str(value, field_name="RunRecord.judge_config_fingerprint")
 
     @field_validator("timestamp")
     @classmethod
@@ -447,12 +542,19 @@ class RunManifestEntry(_StrictModel):
     evaluated_case_count: int = Field(ge=1)
     dataset_capped: bool = False
     system_version: str | None = None
+    model_id: str | None = None
     config_fingerprint: str | None = None
+    judge_config_fingerprint: str | None = None
     metric_versions: dict[str, str]
     aggregate_scores: dict[str, float | None]
     status_counts: dict[MetricStatus, int]
     mandatory_failed_case_ids: list[str] = Field(default_factory=list)
     has_mandatory_failures: bool = False
+
+    @field_validator("judge_config_fingerprint")
+    @classmethod
+    def _validate_judge_fingerprint(cls, value: str | None) -> str | None:
+        return _validate_optional_str(value, field_name="RunManifestEntry.judge_config_fingerprint")
 
     @field_validator("timestamp")
     @classmethod
@@ -475,7 +577,9 @@ class RunManifestEntry(_StrictModel):
             evaluated_case_count=record.evaluated_case_count,
             dataset_capped=record.dataset_capped,
             system_version=record.system_version,
+            model_id=record.model_id,
             config_fingerprint=record.config_fingerprint,
+            judge_config_fingerprint=record.judge_config_fingerprint,
             metric_versions=dict(record.metric_versions),
             aggregate_scores={
                 metric_id: summary.mean_score for metric_id, summary in record.aggregates.items()
@@ -498,6 +602,14 @@ class OrchestratorConfig(_StrictModel):
     fail_fast: bool = False
     retain_checkpoints: bool = False
     seed: int | None = None
+    judge_config_fingerprint: str | None = None
+
+    @field_validator("judge_config_fingerprint")
+    @classmethod
+    def _validate_judge_fingerprint(cls, value: str | None) -> str | None:
+        return _validate_optional_str(
+            value, field_name="OrchestratorConfig.judge_config_fingerprint"
+        )
 
     @field_validator(
         "max_concurrency",
@@ -543,6 +655,633 @@ class RAGExtractorConfig(_StrictModel):
                 field_name=f"RAGExtractorConfig.{info.field_name}",
             )
         return value
+
+
+class DriftWarning(_StrictModel):
+    """Structured provenance or comparability drift alert."""
+
+    category: DriftCategory
+    metric_id: str | None = None
+    baseline_run_id: str | None = None
+    candidate_run_id: str | None = None
+    baseline_value: Any = None
+    candidate_value: Any = None
+    explanation: str = Field(min_length=1)
+
+    @field_validator("metric_id", "baseline_run_id", "candidate_run_id")
+    @classmethod
+    def _validate_opt_ids(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"DriftWarning.{info.field_name}")
+
+    @field_validator("baseline_value", "candidate_value")
+    @classmethod
+    def _validate_values(cls, value: Any, info: ValidationInfo) -> Any:
+        return _ensure_json_serializable(value, field_name=f"DriftWarning.{info.field_name}")
+
+    @field_validator("explanation")
+    @classmethod
+    def _validate_explanation(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="DriftWarning.explanation")
+
+
+class AnomalyFlag(_StrictModel):
+    """Structured anti-masking or evidence-hygiene anomaly finding."""
+
+    anomaly_type: AnomalyType
+    severity: AnomalySeverity
+    scope: AnomalyScope
+    case_id: str | None = None
+    metric_ids: list[str] = Field(default_factory=list)
+    spread: float | None = None
+    explanation: str = Field(min_length=1)
+
+    @field_validator("case_id")
+    @classmethod
+    def _validate_case_id(cls, value: str | None) -> str | None:
+        return _validate_optional_str(value, field_name="AnomalyFlag.case_id")
+
+    @field_validator("metric_ids")
+    @classmethod
+    def _validate_metric_ids(cls, value: list[str]) -> list[str]:
+        return [_ensure_non_empty_str(item, field_name="AnomalyFlag.metric_ids") for item in value]
+
+    @field_validator("spread", mode="before")
+    @classmethod
+    def _validate_spread(cls, value: Any) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name="AnomalyFlag.spread")
+        return round_delta(float(value))
+
+    @field_validator("explanation")
+    @classmethod
+    def _validate_explanation(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="AnomalyFlag.explanation")
+
+    @model_validator(mode="after")
+    def _validate_scope_case_id(self) -> AnomalyFlag:
+        if self.scope == AnomalyScope.CASE and self.case_id is None:
+            raise ValueError("AnomalyFlag.case_id is required when scope is CASE")
+        return self
+
+
+class QualityGatePolicy(_StrictModel):
+    """Declarative acceptance thresholds, drift escalation, and anomaly tolerances."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    min_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_metric_scores: dict[str, float] = Field(default_factory=dict)
+    max_regression_drop: float = Field(default=0.05, ge=0.0, le=1.0)
+    max_metric_regression_drops: dict[str, float] = Field(default_factory=dict)
+    max_regressed_cases: int | None = Field(default=None, ge=0)
+    disagreement_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
+    case_drop_warning_threshold: float = Field(default=0.25, ge=0.0, le=1.0)
+    trend_slope_threshold: float = Field(default=0.01, gt=0.0, le=1.0)
+    max_inconclusive_rate: float = Field(default=0.10, ge=0.0, le=1.0)
+    require_baseline: bool = False
+    require_trend: bool = False
+    min_trend_runs: int = Field(default=2, ge=2)
+    soft_regression_warning: bool = False
+    fail_on_drift: bool = False
+    fail_on_anomaly: bool = False
+    fail_on_degrading_trend: bool = False
+    fail_on_mandatory_regression: bool = True
+
+    @field_validator(
+        "min_score",
+        "max_regression_drop",
+        "disagreement_threshold",
+        "case_drop_warning_threshold",
+        "trend_slope_threshold",
+        "max_inconclusive_rate",
+        mode="before",
+    )
+    @classmethod
+    def _validate_policy_floats(cls, value: Any, info: ValidationInfo) -> Any:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name=f"QualityGatePolicy.{info.field_name}")
+        return round_score(float(value))
+
+    @field_validator("max_regressed_cases", "min_trend_runs", mode="before")
+    @classmethod
+    def _validate_policy_ints(cls, value: Any, info: ValidationInfo) -> Any:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name=f"QualityGatePolicy.{info.field_name}")
+
+    @field_validator("min_metric_scores", "max_metric_regression_drops", mode="before")
+    @classmethod
+    def _validate_metric_float_maps(cls, value: Any, info: ValidationInfo) -> Any:
+        return _validate_bounded_score_map(value, field_name=f"QualityGatePolicy.{info.field_name}")
+
+
+_SAFE_BASELINE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+class BaselineEntry(_StrictModel):
+    """Immutable baseline pointer snapshot linking a named alias to one RunRecord."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    name: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    pinned_at: datetime
+    note: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    dataset_id: str = Field(min_length=1)
+    dataset_version: str | None = None
+    dataset_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    system_version: str | None = None
+    model_id: str | None = None
+    config_fingerprint: str | None = None
+    judge_config_fingerprint: str | None = None
+    metric_versions: dict[str, str] = Field(default_factory=dict)
+    aggregate_scores: dict[str, float | None] = Field(default_factory=dict)
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        cleaned = _ensure_non_empty_str(value, field_name="BaselineEntry.name")
+        if not _SAFE_BASELINE_NAME_RE.match(cleaned) or ".." in cleaned:
+            raise ValueError(
+                f"Invalid BaselineEntry.name {value!r}: must match "
+                "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ without '..'"
+            )
+        return cleaned
+
+    @field_validator("run_id", "dataset_id")
+    @classmethod
+    def _validate_ids(cls, value: str, info: ValidationInfo) -> str:
+        return _ensure_non_empty_str(value, field_name=f"BaselineEntry.{info.field_name}")
+
+    @field_validator("pinned_at")
+    @classmethod
+    def _normalize_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @field_validator("note", "dataset_version", "judge_config_fingerprint")
+    @classmethod
+    def _validate_opt_strings(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"BaselineEntry.{info.field_name}")
+
+    @field_validator("tags")
+    @classmethod
+    def _validate_tags(cls, value: list[str]) -> list[str]:
+        return [_ensure_non_empty_str(item, field_name="BaselineEntry.tags") for item in value]
+
+    @field_validator("metric_versions")
+    @classmethod
+    def _validate_metric_versions(cls, value: dict[str, str]) -> dict[str, str]:
+        return {
+            _ensure_non_empty_str(k, field_name="BaselineEntry.metric_versions"): (
+                _ensure_non_empty_str(v, field_name="BaselineEntry.metric_versions")
+            )
+            for k, v in value.items()
+        }
+
+    @field_validator("aggregate_scores", mode="before")
+    @classmethod
+    def _validate_aggregate_scores(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        validated: dict[str, float | None] = {}
+        for metric_id, score in value.items():
+            if not isinstance(metric_id, str):
+                raise ValueError("BaselineEntry.aggregate_scores keys must be non-empty strings")
+            cleaned_key = _ensure_non_empty_str(
+                metric_id, field_name="BaselineEntry.aggregate_scores"
+            )
+            if score is None:
+                validated[cleaned_key] = None
+                continue
+            _reject_bool_number(
+                score, field_name=f"BaselineEntry.aggregate_scores[{cleaned_key!r}]"
+            )
+            rounded = round_score(float(score))
+            if not (0.0 <= rounded <= 1.0):
+                raise ValueError(
+                    f"BaselineEntry.aggregate_scores[{cleaned_key!r}] must be in [0.0, 1.0]"
+                )
+            validated[cleaned_key] = rounded
+        return validated
+
+
+class BaselineRegistry(_StrictModel):
+    """Schema-versioned persisted mapping of baseline names to BaselineEntry snapshots."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    baselines: dict[str, BaselineEntry] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_key_alignment(self) -> BaselineRegistry:
+        for key, entry in self.baselines.items():
+            if key != entry.name:
+                raise ValueError(
+                    f"BaselineRegistry key {key!r} must match BaselineEntry.name {entry.name!r}"
+                )
+        return self
+
+
+def _validate_optional_bounded_score(value: Any, *, field_name: str) -> float | None:
+    if value is None:
+        return None
+    _reject_bool_number(value, field_name=field_name)
+    rounded = round_score(float(value))
+    if not (0.0 <= rounded <= 1.0):
+        raise ValueError(f"{field_name} must be within [0.0, 1.0], got {rounded}")
+    return rounded
+
+
+def _validate_optional_delta(value: Any, *, field_name: str) -> float | None:
+    if value is None:
+        return None
+    _reject_bool_number(value, field_name=field_name)
+    rounded = round_delta(float(value))
+    if not (-1.0 <= rounded <= 1.0):
+        raise ValueError(f"{field_name} must be within [-1.0, 1.0], got {rounded}")
+    return rounded
+
+
+class MetricComparison(_StrictModel):
+    """Aggregate metric comparison between baseline and candidate runs."""
+
+    metric_id: str = Field(min_length=1)
+    baseline_version: str | None = None
+    candidate_version: str | None = None
+    baseline_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    candidate_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    delta: float | None = Field(default=None, ge=-1.0, le=1.0)
+    direction: ComparisonDirection
+    status_count_deltas: dict[MetricStatus, int] = Field(default_factory=dict)
+
+    @field_validator("metric_id")
+    @classmethod
+    def _validate_metric_id(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="MetricComparison.metric_id")
+
+    @field_validator("baseline_version", "candidate_version")
+    @classmethod
+    def _validate_versions(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"MetricComparison.{info.field_name}")
+
+    @field_validator("baseline_score", "candidate_score", mode="before")
+    @classmethod
+    def _validate_scores(cls, value: Any, info: ValidationInfo) -> float | None:
+        return _validate_optional_bounded_score(
+            value, field_name=f"MetricComparison.{info.field_name}"
+        )
+
+    @field_validator("delta", mode="before")
+    @classmethod
+    def _validate_delta(cls, value: Any) -> float | None:
+        return _validate_optional_delta(value, field_name="MetricComparison.delta")
+
+    @field_validator("status_count_deltas", mode="before")
+    @classmethod
+    def _validate_status_deltas(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        for k, v in value.items():
+            _reject_strict_int(v, field_name=f"MetricComparison.status_count_deltas[{k!r}]")
+        return value
+
+
+class CaseMetricDelta(_StrictModel):
+    """Single-metric baseline-versus-candidate delta on one aligned evaluation case."""
+
+    metric_id: str = Field(min_length=1)
+    baseline_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    candidate_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    delta: float | None = Field(default=None, ge=-1.0, le=1.0)
+    baseline_status: MetricStatus | None = None
+    candidate_status: MetricStatus | None = None
+    regressed: bool = False
+    direction: ComparisonDirection
+
+    @field_validator("metric_id")
+    @classmethod
+    def _validate_metric_id(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="CaseMetricDelta.metric_id")
+
+    @field_validator("baseline_score", "candidate_score", mode="before")
+    @classmethod
+    def _validate_scores(cls, value: Any, info: ValidationInfo) -> float | None:
+        return _validate_optional_bounded_score(
+            value, field_name=f"CaseMetricDelta.{info.field_name}"
+        )
+
+    @field_validator("delta", mode="before")
+    @classmethod
+    def _validate_delta(cls, value: Any) -> float | None:
+        return _validate_optional_delta(value, field_name="CaseMetricDelta.delta")
+
+
+class CaseComparison(_StrictModel):
+    """Aligned case-level regression and transition summary across baseline and candidate."""
+
+    case_id: str = Field(min_length=1)
+    mandatory: bool = False
+    regressed: bool = False
+    mandatory_regressed: bool = False
+    error_introduced: bool = False
+    error_resolved: bool = False
+    metrics: dict[str, CaseMetricDelta]
+
+    @field_validator("case_id")
+    @classmethod
+    def _validate_case_id(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="CaseComparison.case_id")
+
+
+class TargetChangeSummary(_StrictModel):
+    """Contextual summary of target system changes isolated from measurement drift."""
+
+    system_version_changed: bool = False
+    baseline_system_version: str | None = None
+    candidate_system_version: str | None = None
+    model_id_changed: bool = False
+    baseline_model_id: str | None = None
+    candidate_model_id: str | None = None
+    config_fingerprint_changed: bool = False
+    baseline_config_fingerprint: str | None = None
+    candidate_config_fingerprint: str | None = None
+
+
+class RunComparisonReport(_StrictModel):
+    """Schema-versioned pairwise regression report between baseline and candidate runs."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    baseline_run_id: str = Field(min_length=1)
+    candidate_run_id: str = Field(min_length=1)
+    baseline_name: str | None = None
+    target_changes: TargetChangeSummary
+    metric_comparisons: dict[str, MetricComparison]
+    case_comparisons: list[CaseComparison]
+    matched_case_count: int = Field(ge=0)
+    added_case_ids: list[str] = Field(default_factory=list)
+    removed_case_ids: list[str] = Field(default_factory=list)
+    regressed_case_ids: list[str] = Field(default_factory=list)
+    mandatory_regressed_case_ids: list[str] = Field(default_factory=list)
+    drift_warnings: list[DriftWarning] = Field(default_factory=list)
+    anomalies: list[AnomalyFlag] = Field(default_factory=list)
+
+    @field_validator("baseline_run_id", "candidate_run_id")
+    @classmethod
+    def _validate_run_ids(cls, value: str, info: ValidationInfo) -> str:
+        return _ensure_non_empty_str(value, field_name=f"RunComparisonReport.{info.field_name}")
+
+    @field_validator("baseline_name")
+    @classmethod
+    def _validate_baseline_name(cls, value: str | None) -> str | None:
+        return _validate_optional_str(value, field_name="RunComparisonReport.baseline_name")
+
+    @field_validator("matched_case_count", mode="before")
+    @classmethod
+    def _validate_matched_count(cls, value: Any) -> int:
+        return _reject_strict_int(value, field_name="RunComparisonReport.matched_case_count")
+
+    @field_validator(
+        "added_case_ids",
+        "removed_case_ids",
+        "regressed_case_ids",
+        "mandatory_regressed_case_ids",
+    )
+    @classmethod
+    def _validate_id_lists(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        return [
+            _ensure_non_empty_str(item, field_name=f"RunComparisonReport.{info.field_name}")
+            for item in value
+        ]
+
+
+class TrendDataPoint(_StrictModel):
+    """Single chronological observation within a sliding window trend series."""
+
+    run_id: str = Field(min_length=1)
+    timestamp: datetime
+    index: int = Field(ge=0)
+    score: float | None = Field(default=None, ge=0.0, le=1.0)
+    metric_version: str | None = None
+    dataset_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    judge_config_fingerprint: str | None = None
+
+    @field_validator("run_id")
+    @classmethod
+    def _validate_run_id(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="TrendDataPoint.run_id")
+
+    @field_validator("timestamp")
+    @classmethod
+    def _normalize_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @field_validator("index", mode="before")
+    @classmethod
+    def _validate_index(cls, value: Any) -> int:
+        return _reject_strict_int(value, field_name="TrendDataPoint.index")
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def _validate_score(cls, value: Any) -> float | None:
+        return _validate_optional_bounded_score(value, field_name="TrendDataPoint.score")
+
+    @field_validator("metric_version", "judge_config_fingerprint")
+    @classmethod
+    def _validate_opt_fields(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"TrendDataPoint.{info.field_name}")
+
+
+class MetricTrendSummary(_StrictModel):
+    """OLS slope, statistics, and chronological trajectory for one metric."""
+
+    metric_id: str = Field(min_length=1)
+    window_runs: int = Field(ge=0)
+    valid_points: int = Field(ge=0)
+    missing_points: int = Field(ge=0)
+    slope: float | None = None
+    direction: TrendDirection
+    first_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    last_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    mean_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    points: list[TrendDataPoint] = Field(default_factory=list)
+    explanation: str = Field(min_length=1)
+
+    @field_validator("metric_id", "explanation")
+    @classmethod
+    def _validate_non_empty(cls, value: str, info: ValidationInfo) -> str:
+        return _ensure_non_empty_str(value, field_name=f"MetricTrendSummary.{info.field_name}")
+
+    @field_validator("window_runs", "valid_points", "missing_points", mode="before")
+    @classmethod
+    def _validate_counts(cls, value: Any, info: ValidationInfo) -> int:
+        return _reject_strict_int(value, field_name=f"MetricTrendSummary.{info.field_name}")
+
+    @field_validator("slope", mode="before")
+    @classmethod
+    def _validate_slope(cls, value: Any) -> float | None:
+        return _validate_optional_delta(value, field_name="MetricTrendSummary.slope")
+
+    @field_validator(
+        "first_score",
+        "last_score",
+        "min_score",
+        "max_score",
+        "mean_score",
+        mode="before",
+    )
+    @classmethod
+    def _validate_bounds(cls, value: Any, info: ValidationInfo) -> float | None:
+        return _validate_optional_bounded_score(
+            value, field_name=f"MetricTrendSummary.{info.field_name}"
+        )
+
+    @model_validator(mode="after")
+    def _validate_insufficient_data_consistency(self) -> MetricTrendSummary:
+        if self.valid_points < 2:
+            if self.slope is not None:
+                raise ValueError("MetricTrendSummary.slope must be None when valid_points < 2")
+            if self.direction != TrendDirection.INSUFFICIENT_DATA:
+                raise ValueError(
+                    "MetricTrendSummary.direction must be INSUFFICIENT_DATA when valid_points < 2"
+                )
+        return self
+
+
+class TrendReport(_StrictModel):
+    """Schema-versioned sliding window trajectory and drift summary across historical runs."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    window: int = Field(ge=2)
+    dataset_id_filter: str | None = None
+    model_id_filter: str | None = None
+    inspected_run_ids: list[str] = Field(default_factory=list)
+    slope_threshold: float = Field(default=0.01, gt=0.0, le=1.0)
+    metrics: dict[str, MetricTrendSummary] = Field(default_factory=dict)
+    drift_warnings: list[DriftWarning] = Field(default_factory=list)
+
+    @field_validator("window", mode="before")
+    @classmethod
+    def _validate_window(cls, value: Any) -> int:
+        return _reject_strict_int(value, field_name="TrendReport.window")
+
+    @field_validator("dataset_id_filter", "model_id_filter")
+    @classmethod
+    def _validate_filters(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"TrendReport.{info.field_name}")
+
+    @field_validator("inspected_run_ids")
+    @classmethod
+    def _validate_run_ids(cls, value: list[str]) -> list[str]:
+        return [
+            _ensure_non_empty_str(item, field_name="TrendReport.inspected_run_ids")
+            for item in value
+        ]
+
+    @field_validator("slope_threshold", mode="before")
+    @classmethod
+    def _validate_threshold(cls, value: Any) -> float:
+        _reject_bool_number(value, field_name="TrendReport.slope_threshold")
+        rounded = round_score(float(value))
+        if not (0.0 < rounded <= 1.0):
+            raise ValueError(
+                f"TrendReport.slope_threshold must be within (0.0, 1.0], got {rounded}"
+            )
+        return rounded
+
+
+class GateRuleCheck(_StrictModel):
+    """Single policy check evaluation trace emitted by QualityGate."""
+
+    rule_id: str = Field(min_length=1)
+    status: GateDecision
+    message: str = Field(min_length=1)
+    metric_id: str | None = None
+    observed: float | int | str | None = None
+    threshold: float | int | str | None = None
+
+    @field_validator("rule_id", "message")
+    @classmethod
+    def _validate_required_text(cls, value: str, info: ValidationInfo) -> str:
+        return _ensure_non_empty_str(value, field_name=f"GateRuleCheck.{info.field_name}")
+
+    @field_validator("metric_id")
+    @classmethod
+    def _validate_metric_id(cls, value: str | None) -> str | None:
+        return _validate_optional_str(value, field_name="GateRuleCheck.metric_id")
+
+    @field_validator("observed", "threshold", mode="before")
+    @classmethod
+    def _validate_scalar(cls, value: Any, info: ValidationInfo) -> Any:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name=f"GateRuleCheck.{info.field_name}")
+        if isinstance(value, float):
+            return round_delta(value)
+        return value
+
+
+class QualityGateResult(_StrictModel):
+    """Schema-versioned deterministic acceptance outcome emitted by QualityGate."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    decision: GateDecision
+    candidate_run_id: str = Field(min_length=1)
+    baseline_run_id: str | None = None
+    passed: bool
+    blocking: bool
+    inconclusive_rate: float = Field(ge=0.0, le=1.0)
+    checks: list[GateRuleCheck]
+    failure_reasons: list[str] = Field(default_factory=list)
+    inconclusive_reasons: list[str] = Field(default_factory=list)
+    warning_reasons: list[str] = Field(default_factory=list)
+    drift_warnings: list[DriftWarning] = Field(default_factory=list)
+    anomalies: list[AnomalyFlag] = Field(default_factory=list)
+    summary: str = Field(min_length=1)
+
+    @field_validator("candidate_run_id", "summary")
+    @classmethod
+    def _validate_required_text(cls, value: str, info: ValidationInfo) -> str:
+        return _ensure_non_empty_str(value, field_name=f"QualityGateResult.{info.field_name}")
+
+    @field_validator("baseline_run_id")
+    @classmethod
+    def _validate_baseline_run_id(cls, value: str | None) -> str | None:
+        return _validate_optional_str(value, field_name="QualityGateResult.baseline_run_id")
+
+    @field_validator("inconclusive_rate", mode="before")
+    @classmethod
+    def _validate_inconclusive_rate(cls, value: Any) -> float:
+        _reject_bool_number(value, field_name="QualityGateResult.inconclusive_rate")
+        rounded = round_score(float(value))
+        if not (0.0 <= rounded <= 1.0):
+            raise ValueError(
+                f"QualityGateResult.inconclusive_rate must be within [0.0, 1.0], got {rounded}"
+            )
+        return rounded
+
+    @field_validator("failure_reasons", "inconclusive_reasons", "warning_reasons")
+    @classmethod
+    def _validate_reason_lists(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        return [
+            _ensure_non_empty_str(item, field_name=f"QualityGateResult.{info.field_name}")
+            for item in value
+        ]
+
+    @model_validator(mode="after")
+    def _validate_decision_flags(self) -> QualityGateResult:
+        expected_passed = self.decision == GateDecision.PASS
+        expected_blocking = self.decision == GateDecision.FAIL
+        if self.passed != expected_passed or self.blocking != expected_blocking:
+            raise ValueError(
+                f"QualityGateResult.passed/blocking flags must match decision {self.decision.value}"
+            )
+        return self
 
 
 @runtime_checkable
