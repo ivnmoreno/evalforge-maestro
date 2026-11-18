@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvalForge Maestro M2 Schema Extensions (v1.0)",
+  "$comment": "Additive Milestone 2 $defs overlaying specs/001-evaluation-foundation/contracts/schemas-v1.json: refines EvaluationCase.expected_context via EvaluationCaseExpectedContext and tightens RetrievedChunk.rank to minimum 1.",
+  "$defs": {
+    "ExpectedContextItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "text": { "type": ["string", "null"], "default": null },
+        "relevance": { "type": "integer", "minimum": 0, "default": 1 }
+      }
+    },
+    "EvaluationCaseExpectedContext": {
+      "type": ["array", "null"],
+      "items": {
+        "anyOf": [
+          { "type": "string", "minLength": 1 },
+          { "$ref": "#/$defs/ExpectedContextItem" }
+        ]
+      },
+      "default": null
+    },
+    "RetrievedChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "text": { "type": "string" },
+        "parent_id": { "type": ["string", "null"], "default": null },
+        "rank": { "type": ["integer", "null"], "minimum": 1, "default": null },
+        "score": { "type": ["number", "null"], "default": null },
+        "metadata": { "type": "object", "default": {} }
+      }
+    }
+  }
+}

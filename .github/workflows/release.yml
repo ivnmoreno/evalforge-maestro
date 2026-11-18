@@ -1,0 +1,154 @@
+name: Release to TestPyPI and PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Sync locked dev environment
+        run: uv sync --frozen --extra dev
+
+      - name: Run full Constitution Principle VII verification gates
+        run: |
+          uv lock --check
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run ruff check --select S src/
+          uv run mypy --strict src tests
+          uv run pytest --strict-markers -W error --cov=evalforge_maestro --cov-branch --cov-fail-under=85
+          uv run pytest --strict-markers -W error --cov=evalforge_maestro.metrics --cov-branch --cov-fail-under=100 tests/unit/test_metrics.py tests/unit/test_ir_metrics.py tests/contract/test_metric_formulas.py
+          uv run pytest --strict-markers -W error -m "gate_determinism or gate_immutability"
+          uv export --frozen --no-emit-project --quiet -o "$RUNNER_TEMP/requirements.txt"
+          uv run pip-audit -r "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip --strict
+          uv run pip-audit --skip-editable
+
+      - name: Build distribution artifacts and validate metadata
+        run: |
+          uv build
+          uv run twine check --strict dist/*
+
+      - name: Verify built wheel version matches Git tag
+        run: |
+          uv run python - <<'PY'
+          import os, pathlib, zipfile
+          tag = os.environ["GITHUB_REF_NAME"]
+          expected = tag.removeprefix("v")
+          wheels = list(pathlib.Path("dist").glob("*.whl"))
+          assert len(wheels) == 1, f"Expected 1 wheel, found {wheels}"
+          with zipfile.ZipFile(wheels[0]) as zf:
+              meta_name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))
+              meta = zf.read(meta_name).decode("utf-8")
+          ver = next(line.split(": ", 1)[1].strip() for line in meta.splitlines() if line.startswith("Version: "))
+          assert ver == expected, f"Wheel version {ver!r} does not match tag {tag!r} ({expected!r})"
+          print(f"Verified wheel version {ver!r} matches tag {tag!r}")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    needs: verify-and-build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/evalforge-maestro
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  verify-testpypi:
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install from TestPyPI in clean venv and verify smoke checks
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          uv venv "$RUNNER_TEMP/testpypi-venv" --python "3.12"
+          for attempt in 1 2 3 4 5; do
+            if uv pip install --python "$RUNNER_TEMP/testpypi-venv" \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple/ \
+              "evalforge-maestro==${VERSION}"; then
+              break
+            fi
+            [ "$attempt" -lt 5 ] || exit 1
+            sleep 10
+          done
+          VERSION="${GITHUB_REF_NAME#v}" \
+            "$RUNNER_TEMP/testpypi-venv/bin/python" - <<'PY'
+          import os
+          import sys
+          import evalforge_maestro
+
+          expected = os.environ["VERSION"]
+          assert evalforge_maestro.__version__ == expected
+          assert "docpipe_maestro" not in sys.modules
+          try:
+              evalforge_maestro.DocpipeAdapter()
+          except evalforge_maestro.MissingExtraError as exc:
+              assert "docpipe" in str(exc)
+          else:
+              raise AssertionError("Expected MissingExtraError")
+          PY
+
+  publish-pypi:
+    needs: verify-testpypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/evalforge-maestro
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --generate-notes

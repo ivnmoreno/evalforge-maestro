@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from evalforge_maestro._canonical import round_score
 
@@ -47,6 +48,12 @@ def _reject_bool_number(value: Any, *, field_name: str) -> Any:
         raise ValueError(f"{field_name} must be numeric, not bool")
     if isinstance(value, (int, float)) and not math.isfinite(float(value)):
         raise ValueError(f"{field_name} must be finite")
+    return value
+
+
+def _reject_strict_int(value: Any, *, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an integer, not {type(value).__name__}")
     return value
 
 
@@ -127,6 +134,24 @@ class CaseCriteria(_StrictModel):
         return value
 
 
+class ExpectedContextItem(_StrictModel):
+    """Typed ground-truth retrieval item on EvaluationCase.expected_context."""
+
+    id: str = Field(min_length=1)
+    text: str | None = None
+    relevance: int = Field(default=1, ge=0)
+
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="ExpectedContextItem.id")
+
+    @field_validator("relevance", mode="before")
+    @classmethod
+    def _validate_relevance(cls, value: Any) -> int:
+        return _reject_strict_int(value, field_name="ExpectedContextItem.relevance")
+
+
 class EvaluationCase(_StrictModel):
     """Immutable single evaluation case contract."""
 
@@ -134,7 +159,7 @@ class EvaluationCase(_StrictModel):
     id: str = Field(min_length=1)
     input: Any
     reference: Any = None
-    expected_context: list[Any] | None = None
+    expected_context: list[str | ExpectedContextItem] | None = None
     expected_tools: list[dict[str, Any]] | None = None
     metadata: CaseMetadata = Field(default_factory=CaseMetadata)
     criteria: CaseCriteria = Field(default_factory=CaseCriteria)
@@ -144,7 +169,32 @@ class EvaluationCase(_StrictModel):
     def _validate_id(cls, value: str) -> str:
         return _ensure_non_empty_str(value, field_name="EvaluationCase.id")
 
-    @field_validator("input", "reference", "expected_context", "expected_tools")
+    @field_validator("expected_context")
+    @classmethod
+    def _validate_expected_context(
+        cls,
+        value: list[str | ExpectedContextItem] | None,
+    ) -> list[str | ExpectedContextItem] | None:
+        if value is None:
+            return None
+        normalized: list[str | ExpectedContextItem] = []
+        seen_ids: set[str] = set()
+        for item in value:
+            if isinstance(item, str):
+                cleaned = _ensure_non_empty_str(item, field_name="EvaluationCase.expected_context")
+                item_id = cleaned
+                normalized.append(cleaned)
+            else:
+                item_id = item.id
+                normalized.append(item)
+            if item_id in seen_ids:
+                raise ValueError(
+                    f"Duplicate identifier {item_id!r} in EvaluationCase.expected_context"
+                )
+            seen_ids.add(item_id)
+        return normalized
+
+    @field_validator("input", "reference", "expected_tools")
     @classmethod
     def _validate_json_fields(cls, value: Any) -> Any:
         return _ensure_json_serializable(value, field_name="EvaluationCase")
@@ -173,12 +223,12 @@ class TokenUsage(_StrictModel):
 
 
 class RetrievedChunk(_StrictModel):
-    """Reserved retrieved chunk submodel for RAG evidence capture (M2+)."""
+    """Retrieved chunk submodel for RAG evidence capture."""
 
     id: str = Field(min_length=1)
     text: str
     parent_id: str | None = None
-    rank: int | None = None
+    rank: int | None = Field(default=None, ge=1)
     score: float | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -187,12 +237,19 @@ class RetrievedChunk(_StrictModel):
     def _validate_id(cls, value: str) -> str:
         return _ensure_non_empty_str(value, field_name="RetrievedChunk.id")
 
-    @field_validator("rank", "score", mode="before")
+    @field_validator("rank", mode="before")
+    @classmethod
+    def _validate_rank(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name="RetrievedChunk.rank")
+
+    @field_validator("score", mode="before")
     @classmethod
     def _reject_bools(cls, value: Any) -> Any:
         if value is None:
             return None
-        return _reject_bool_number(value, field_name="RetrievedChunk")
+        return _reject_bool_number(value, field_name="RetrievedChunk.score")
 
     @field_validator("metadata")
     @classmethod
@@ -456,6 +513,36 @@ class OrchestratorConfig(_StrictModel):
         if value is None:
             return None
         return _reject_bool_number(value, field_name="OrchestratorConfig")
+
+
+class RAGExtractorConfig(_StrictModel):
+    """Declarative field-extraction rules for protocol-based RAGAdapter."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_assignment=True,
+        arbitrary_types_allowed=True,
+    )
+
+    output: str | Callable[[Any], Any] | None = None
+    chunks: str | Callable[[Any], Any] | None = None
+    chunk_id: str | Callable[[Any], Any] | None = None
+    chunk_text: str | Callable[[Any], Any] | None = None
+    chunk_parent_id: str | Callable[[Any], Any] | None = None
+    chunk_rank: str | Callable[[Any], Any] | None = None
+    chunk_score: str | Callable[[Any], Any] | None = None
+    chunk_metadata: str | Callable[[Any], Any] | None = None
+    tokens: str | Callable[[Any], Any] | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _validate_extractor_spec(cls, value: Any, info: ValidationInfo) -> Any:
+        if isinstance(value, str):
+            return _ensure_non_empty_str(
+                value,
+                field_name=f"RAGExtractorConfig.{info.field_name}",
+            )
+        return value
 
 
 @runtime_checkable
