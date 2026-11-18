@@ -2,10 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main, "00*"]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -104,8 +108,9 @@ jobs:
       - name: Verify clean minimal wheel install (--no-dev)
         shell: bash
         run: |
+          rm -rf "$RUNNER_TEMP/clean-wheel-venv"
           uv venv "$RUNNER_TEMP/clean-wheel-venv" --python "${{ matrix.python-version }}"
-          if [ -x "$RUNNER_TEMP/clean-wheel-venv/bin/python" ]; then
+          if [ -f "$RUNNER_TEMP/clean-wheel-venv/bin/python" ]; then
             VENV_PY="$RUNNER_TEMP/clean-wheel-venv/bin/python"
           else
             VENV_PY="$RUNNER_TEMP/clean-wheel-venv/Scripts/python.exe"

@@ -232,7 +232,7 @@ class EvaluationOrchestrator:
             return await adapter.execute(case)
         try:
             return await asyncio.wait_for(adapter.execute(case), timeout=timeout)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             elapsed = round_score(max(0.0, time.perf_counter() - start))
             return ExecutionResult(
                 case_id=case.id,

@@ -124,6 +124,9 @@ def test_library_ast_import_and_logging_boundaries() -> None:
 
 
 def test_package_logger_uses_null_handler_only() -> None:
+    import evalforge_maestro
+
+    _ = evalforge_maestro
     pkg_logger = logging.getLogger("evalforge_maestro")
     assert any(isinstance(h, logging.NullHandler) for h in pkg_logger.handlers)
     assert all(isinstance(h, logging.NullHandler) for h in pkg_logger.handlers)
