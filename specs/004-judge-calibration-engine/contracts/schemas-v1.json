@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvalForge Maestro M4 Judge & Calibration Schema Extensions (v1.0)",
+  "$comment": "Milestone 4 $defs for JudgeConfig, JudgeResponse, HumanCalibrationSample, CalibrationDisagreementType, CalibrationDisagreement, and CalibrationReport.",
+  "$defs": {
+    "CalibrationDisagreementType": {
+      "type": "string",
+      "enum": ["too_generous", "too_harsh", "score_divergence", "inconclusive"]
+    },
+    "JudgeConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "model": { "type": "string", "minLength": 1, "default": "mock-judge" },
+        "api_base": {
+          "anyOf": [
+            { "type": "string", "pattern": "^https?://[^\\s@?#]+$" },
+            { "type": "null" }
+          ],
+          "default": null
+        },
+        "temperature": { "type": "number", "minimum": 0.0, "maximum": 2.0, "default": 0.0 },
+        "pass_threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 },
+        "max_retries": { "type": "integer", "minimum": 0, "maximum": 10, "default": 2 },
+        "retry_backoff_seconds": { "type": "number", "minimum": 0.0, "maximum": 60.0, "default": 0.5 },
+        "timeout_seconds": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 600.0, "default": 30.0 },
+        "local_only": { "type": "boolean", "default": false },
+        "mock_mode": { "type": "boolean", "default": false },
+        "seed": { "type": ["integer", "null"], "default": null },
+        "prompt_version": { "type": "string", "minLength": 1, "default": "1.0" },
+        "extra_params": { "type": "object", "default": {} }
+      }
+    },
+    "JudgeResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "rationale"],
+      "properties": {
+        "score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "rationale": { "type": "string", "minLength": 1 },
+        "verdict": { "type": ["string", "null"], "default": null },
+        "supported_claims": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "unsupported_claims": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        }
+      }
+    },
+    "HumanCalibrationSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "input", "output"],
+      "anyOf": [
+        {
+          "required": ["human_score"],
+          "properties": { "human_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 } }
+        },
+        {
+          "required": ["human_passed"],
+          "properties": { "human_passed": { "type": "boolean" } }
+        }
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "case_id": { "type": "string", "minLength": 1 },
+        "input": {},
+        "output": {},
+        "reference": { "default": null },
+        "retrieved_chunks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RetrievedChunk" },
+          "default": []
+        },
+        "human_score": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": null
+        },
+        "human_passed": { "type": ["boolean", "null"], "default": null },
+        "notes": { "type": ["string", "null"], "default": null },
+        "metadata": { "type": "object", "default": {} }
+      }
+    },
+    "CalibrationDisagreement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "disagreement_type",
+        "human_passed",
+        "judge_status",
+        "judge_rationale"
+      ],
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1 },
+        "disagreement_type": { "$ref": "#/$defs/CalibrationDisagreementType" },
+        "human_score": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": null
+        },
+        "human_passed": { "type": "boolean" },
+        "judge_score": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": null
+        },
+        "judge_status": { "$ref": "#/$defs/MetricStatus" },
+        "judge_passed": { "type": ["boolean", "null"], "default": null },
+        "score_delta": {
+          "type": ["number", "null"],
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "default": null
+        },
+        "judge_rationale": { "type": "string", "minLength": 1 },
+        "human_notes": { "type": ["string", "null"], "default": null }
+      }
+    },
+    "CalibrationReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metric_id",
+        "metric_version",
+        "judge_config",
+        "judge_config_fingerprint",
+        "total_cases",
+        "valid_cases",
+        "inconclusive_cases",
+        "pass_threshold_evaluated",
+        "human_threshold_evaluated",
+        "recommended_pass_threshold"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "metric_id": { "type": "string", "minLength": 1 },
+        "metric_version": { "type": "string", "minLength": 1 },
+        "judge_config": { "$ref": "#/$defs/JudgeConfig" },
+        "judge_config_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "total_cases": { "type": "integer", "minimum": 1 },
+        "valid_cases": { "type": "integer", "minimum": 0 },
+        "inconclusive_cases": { "type": "integer", "minimum": 0 },
+        "pass_threshold_evaluated": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "human_threshold_evaluated": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "score_divergence_threshold": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.25
+        },
+        "exact_agreement_rate": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "default": null
+        },
+        "too_generous_rate": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": null
+        },
+        "too_harsh_rate": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": null
+        },
+        "mean_human_score": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": null
+        },
+        "mean_judge_score": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": null
+        },
+        "mean_score_delta": {
+          "type": ["number", "null"],
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "default": null
+        },
+        "disagreements": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CalibrationDisagreement" },
+          "default": []
+        },
+        "recommended_pass_threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      }
+    }
+  }
+}

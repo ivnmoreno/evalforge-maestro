@@ -13,12 +13,13 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from evalforge_maestro._canonical import canonical_json_str, round_score
+from evalforge_maestro._canonical import canonical_json_str, canonical_sha256, round_score
 from evalforge_maestro.datasets import DatasetEngine, DatasetStreamResult
 from evalforge_maestro.exceptions import ExecutionError, ImmutabilityError, MemoryLimitExceededError
 from evalforge_maestro.storage import LocalRunStore
 from evalforge_maestro.types import (
     AggregateMetricSummary,
+    AsyncBatchMetric,
     CaseEvaluationRecord,
     EvaluationCase,
     ExecutionResult,
@@ -183,6 +184,27 @@ def _build_aggregates(
     return aggregates, global_counts, sorted(mandatory_failed)
 
 
+def _resolve_judge_config_fingerprint(
+    metrics: Sequence[Metric],
+    explicit_fingerprint: str | None,
+) -> str | None:
+    """Resolve explicit or derived canonical judge configuration fingerprint for a run."""
+    if explicit_fingerprint is not None:
+        return explicit_fingerprint
+    judge_fps: list[tuple[str, str]] = []
+    for metric in metrics:
+        fp = getattr(metric, "judge_config_fingerprint", None)
+        if isinstance(fp, str) and fp:
+            judge_fps.append((metric.metadata.metric_id, fp))
+    if not judge_fps:
+        return None
+    if len(judge_fps) == 1:
+        return judge_fps[0][1]
+    return canonical_sha256(
+        {"judges": [[mid, fp] for mid, fp in sorted(judge_fps, key=lambda pair: pair)]}
+    )
+
+
 class EvaluationOrchestrator:
     """Coordinates bounded-concurrency target execution, scoring, and run assembly."""
 
@@ -269,6 +291,9 @@ class EvaluationOrchestrator:
                 f"{store.run_path(resolved_run_id)}; historical runs cannot be overwritten."
             )
 
+        sync_metrics = [m for m in metrics if not isinstance(m, AsyncBatchMetric)]
+        batch_metrics = [m for m in metrics if isinstance(m, AsyncBatchMetric)]
+
         stream_info: list[DatasetStreamResult] = []
         case_iter = enumerate(
             dataset.iter_cases(
@@ -280,6 +305,9 @@ class EvaluationOrchestrator:
         ckpt_lock = asyncio.Lock()
         stop_event = asyncio.Event()
         completed_by_index: dict[int, CaseEvaluationRecord] = {}
+        raw_batch_inputs: dict[
+            int, tuple[EvaluationCase, ExecutionResult, dict[str, MetricResult]]
+        ] = {}
         fatal_error: list[BaseException] = []
 
         async def _worker() -> None:
@@ -304,28 +332,35 @@ class EvaluationOrchestrator:
                     return
 
                 execution = await self._execute_single_case(case, adapter)
-                metric_results = _evaluate_metrics_safe(case, execution, metrics)
-                persisted_execution = _truncate_execution_result(
-                    execution, self._config.max_context_chars
-                )
-                record = CaseEvaluationRecord(
-                    case_id=case.id,
-                    mandatory=case.criteria.mandatory,
-                    execution=persisted_execution,
-                    metrics=metric_results,
-                )
-                completed_by_index[index] = record
-                async with ckpt_lock:
-                    store.append_checkpoint(resolved_run_id, record)
+                metric_results = _evaluate_metrics_safe(case, execution, sync_metrics)
 
-                has_case_error = bool(persisted_execution.errors) or any(
-                    m.status == MetricStatus.INCONCLUSIVE for m in metric_results.values()
-                )
+                if not batch_metrics:
+                    persisted_execution = _truncate_execution_result(
+                        execution, self._config.max_context_chars
+                    )
+                    record = CaseEvaluationRecord(
+                        case_id=case.id,
+                        mandatory=case.criteria.mandatory,
+                        execution=persisted_execution,
+                        metrics=metric_results,
+                    )
+                    completed_by_index[index] = record
+                    async with ckpt_lock:
+                        store.append_checkpoint(resolved_run_id, record)
+                    has_case_error = bool(persisted_execution.errors) or any(
+                        m.status == MetricStatus.INCONCLUSIVE for m in metric_results.values()
+                    )
+                else:
+                    raw_batch_inputs[index] = (case, execution, metric_results)
+                    has_case_error = bool(execution.errors) or any(
+                        m.status == MetricStatus.INCONCLUSIVE for m in metric_results.values()
+                    )
+
                 if self._config.fail_fast and has_case_error:
                     fatal_error.append(
                         ExecutionError(
                             f"Execution aborted in fail_fast mode on case {case.id!r}: "
-                            f"{persisted_execution.errors}"
+                            f"{execution.errors}"
                         )
                     )
                     stop_event.set()
@@ -337,10 +372,67 @@ class EvaluationOrchestrator:
         if fatal_error:
             raise fatal_error[0]
 
+        if batch_metrics:
+            ordered_indices = sorted(raw_batch_inputs)
+            ordered_pairs = [
+                (raw_batch_inputs[idx][0], raw_batch_inputs[idx][1]) for idx in ordered_indices
+            ]
+            batch_results_by_metric: dict[str, dict[int, MetricResult]] = {
+                bm.metadata.metric_id: {} for bm in batch_metrics
+            }
+
+            if self._config.fail_fast:
+                chunk_size = self._config.max_concurrency
+                for start in range(0, len(ordered_pairs), chunk_size):
+                    chunk_indices = ordered_indices[start : start + chunk_size]
+                    chunk_pairs = ordered_pairs[start : start + chunk_size]
+                    for bm in batch_metrics:
+                        chunk_res = await bm.aevaluate_batch(
+                            chunk_pairs, max_concurrency=self._config.max_concurrency
+                        )
+                        for idx, m_res in zip(chunk_indices, chunk_res, strict=True):
+                            batch_results_by_metric[bm.metadata.metric_id][idx] = m_res
+                            if m_res.status == MetricStatus.INCONCLUSIVE:
+                                raise ExecutionError(
+                                    f"Execution aborted in fail_fast mode on case "
+                                    f"{raw_batch_inputs[idx][0].id!r}: {m_res.explanation}"
+                                )
+            else:
+                for bm in batch_metrics:
+                    bm_res = await bm.aevaluate_batch(
+                        ordered_pairs, max_concurrency=self._config.max_concurrency
+                    )
+                    for idx, m_res in zip(ordered_indices, bm_res, strict=True):
+                        batch_results_by_metric[bm.metadata.metric_id][idx] = m_res
+
+            for idx in ordered_indices:
+                case, execution, sync_results = raw_batch_inputs[idx]
+                merged_metrics: dict[str, MetricResult] = {}
+                for m in metrics:
+                    mid = m.metadata.metric_id
+                    if mid in sync_results:
+                        merged_metrics[mid] = sync_results[mid]
+                    elif mid in batch_results_by_metric and idx in batch_results_by_metric[mid]:
+                        merged_metrics[mid] = batch_results_by_metric[mid][idx]
+                persisted_execution = _truncate_execution_result(
+                    execution, self._config.max_context_chars
+                )
+                record = CaseEvaluationRecord(
+                    case_id=case.id,
+                    mandatory=case.criteria.mandatory,
+                    execution=persisted_execution,
+                    metrics=merged_metrics,
+                )
+                completed_by_index[idx] = record
+                store.append_checkpoint(resolved_run_id, record)
+
         ordered_records = [completed_by_index[idx] for idx in sorted(completed_by_index)]
         meta = stream_info[0]
         aggregates, status_counts, mandatory_failed = _build_aggregates(metrics, ordered_records)
         metric_versions = {m.metadata.metric_id: m.metadata.metric_version for m in metrics}
+        resolved_judge_fp = _resolve_judge_config_fingerprint(
+            metrics, self._config.judge_config_fingerprint
+        )
 
         run_record = RunRecord(
             run_id=resolved_run_id,
@@ -355,7 +447,7 @@ class EvaluationOrchestrator:
             system_version=adapter.system_version,
             model_id=adapter.model_id,
             config_fingerprint=adapter.config_fingerprint,
-            judge_config_fingerprint=self._config.judge_config_fingerprint,
+            judge_config_fingerprint=resolved_judge_fp,
             metric_versions=metric_versions,
             seed=self._config.seed,
             aggregates=aggregates,

@@ -1278,12 +1278,16 @@ dev = [
 docpipe = [
     { name = "docpipe-maestro" },
 ]
+judges = [
+    { name = "litellm" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "commitizen", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "docpipe-maestro", marker = "extra == 'docpipe'", specifier = ">=0.2" },
     { name = "jsonschema", specifier = ">=4.23,<5" },
+    { name = "litellm", marker = "extra == 'judges'", specifier = ">=1.84.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.7" },
     { name = "pydantic", specifier = ">=2.7,<3" },
@@ -1293,7 +1297,7 @@ requires-dist = [
     { name = "twine", marker = "extra == 'dev'", specifier = ">=5.1" },
     { name = "types-jsonschema", marker = "extra == 'dev'", specifier = ">=4.23" },
 ]
-provides-extras = ["dev", "docpipe"]
+provides-extras = ["dev", "docpipe", "judges"]
 
 [[package]]
 name = "exceptiongroup"

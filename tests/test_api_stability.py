@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 import evalforge_maestro
-from evalforge_maestro import adapters, datasets, execution, metrics, regression, storage
+from evalforge_maestro import adapters, datasets, execution, judges, metrics, regression, storage
 from evalforge_maestro.exceptions import (
     AdapterError,
     ConfigurationError,
@@ -17,6 +17,8 @@ from evalforge_maestro.exceptions import (
     EvalforgeError,
     ExecutionError,
     ImmutabilityError,
+    JudgeError,
+    LocalOnlyPolicyError,
     MemoryLimitExceededError,
     MetricError,
     MissingExtraError,
@@ -25,7 +27,12 @@ from evalforge_maestro.exceptions import (
 from evalforge_maestro.types import (
     BaselineEntry,
     BaselineRegistry,
+    CalibrationDisagreement,
+    CalibrationReport,
     ExpectedContextItem,
+    HumanCalibrationSample,
+    JudgeConfig,
+    JudgeResponse,
     QualityGatePolicy,
     QualityGateResult,
     RAGExtractorConfig,
@@ -48,8 +55,15 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "AnomalyScope",
         "AnomalySeverity",
         "AnomalyType",
+        "AnswerCorrectnessMetric",
+        "AnswerRelevanceMetric",
+        "AsyncBatchMetric",
+        "BaseJudgeMetric",
         "BaselineEntry",
         "BaselineRegistry",
+        "CalibrationDisagreement",
+        "CalibrationDisagreementType",
+        "CalibrationReport",
         "CallableAdapter",
         "CaseComparison",
         "CaseCriteria",
@@ -59,6 +73,8 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "CaseSplit",
         "ComparisonDirection",
         "ConfigurationError",
+        "ContextRelevanceMetric",
+        "CustomRubricJudgeMetric",
         "DatasetEngine",
         "DatasetError",
         "DatasetStreamResult",
@@ -76,9 +92,15 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "ExpectedContextItem",
         "GateDecision",
         "GateRuleCheck",
+        "GroundednessMetric",
         "HitRateAtKMetric",
+        "HumanCalibrationSample",
         "ImmutabilityError",
         "JsonSchemaValidationMetric",
+        "JudgeConfig",
+        "JudgeError",
+        "JudgeResponse",
+        "LocalOnlyPolicyError",
         "LocalRunStore",
         "MRRMetric",
         "MemoryLimitExceededError",
@@ -112,11 +134,18 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "TrendDirection",
         "TrendReport",
         "__version__",
+        "acalibrate_judge",
         "analyze_trend",
+        "answer_correctness",
+        "answer_relevance",
+        "calibrate_judge",
         "compare_runs",
+        "context_relevance",
+        "custom_rubric_judge",
         "detect_anomalies",
         "detect_drift",
         "exact_match",
+        "groundedness",
         "hit_rate_at_k",
         "json_schema_validation",
         "load_docpipe_fixture",
@@ -127,6 +156,21 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "recall_at_k",
     }
     assert set(evalforge_maestro.__all__) == expected_top_all
+    assert set(judges.__all__) == {
+        "AnswerCorrectnessMetric",
+        "AnswerRelevanceMetric",
+        "BaseJudgeMetric",
+        "ContextRelevanceMetric",
+        "CustomRubricJudgeMetric",
+        "GroundednessMetric",
+        "acalibrate_judge",
+        "answer_correctness",
+        "answer_relevance",
+        "calibrate_judge",
+        "context_relevance",
+        "custom_rubric_judge",
+        "groundedness",
+    }
     assert set(regression.__all__) == {
         "QualityGate",
         "analyze_trend",
@@ -169,6 +213,8 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         MemoryLimitExceededError: ExecutionError,
         StorageError: EvalforgeError,
         ImmutabilityError: StorageError,
+        JudgeError: EvalforgeError,
+        LocalOnlyPolicyError: EvalforgeError,
     }
     for sub, parent in subclasses.items():
         assert issubclass(sub, parent)
@@ -401,4 +447,126 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         "checks",
         "drift_warnings",
         "anomalies",
+    }
+    for judge_cls in (
+        judges.GroundednessMetric,
+        judges.AnswerRelevanceMetric,
+        judges.ContextRelevanceMetric,
+        judges.AnswerCorrectnessMetric,
+    ):
+        assert _param_spec(judge_cls.__init__) == [
+            ("self", "POSITIONAL_OR_KEYWORD"),
+            ("config", "KEYWORD_ONLY"),
+            ("api_key", "KEYWORD_ONLY"),
+            ("mock_responses", "KEYWORD_ONLY"),
+            ("completion_fn", "KEYWORD_ONLY"),
+        ]
+    for judge_factory in (
+        judges.groundedness,
+        judges.answer_relevance,
+        judges.context_relevance,
+        judges.answer_correctness,
+    ):
+        assert _param_spec(judge_factory) == [
+            ("config", "KEYWORD_ONLY"),
+            ("api_key", "KEYWORD_ONLY"),
+            ("mock_responses", "KEYWORD_ONLY"),
+            ("completion_fn", "KEYWORD_ONLY"),
+        ]
+    assert _param_spec(judges.CustomRubricJudgeMetric.__init__) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("rubric", "POSITIONAL_OR_KEYWORD"),
+        ("metric_id", "KEYWORD_ONLY"),
+        ("metric_version", "KEYWORD_ONLY"),
+        ("what_it_measures", "KEYWORD_ONLY"),
+        ("require_reference", "KEYWORD_ONLY"),
+        ("require_context", "KEYWORD_ONLY"),
+        ("config", "KEYWORD_ONLY"),
+        ("api_key", "KEYWORD_ONLY"),
+        ("mock_responses", "KEYWORD_ONLY"),
+        ("completion_fn", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(judges.custom_rubric_judge) == [
+        ("rubric", "POSITIONAL_OR_KEYWORD"),
+        ("metric_id", "KEYWORD_ONLY"),
+        ("metric_version", "KEYWORD_ONLY"),
+        ("what_it_measures", "KEYWORD_ONLY"),
+        ("require_reference", "KEYWORD_ONLY"),
+        ("require_context", "KEYWORD_ONLY"),
+        ("config", "KEYWORD_ONLY"),
+        ("api_key", "KEYWORD_ONLY"),
+        ("mock_responses", "KEYWORD_ONLY"),
+        ("completion_fn", "KEYWORD_ONLY"),
+    ]
+    for cal_fn in (judges.calibrate_judge, judges.acalibrate_judge):
+        assert _param_spec(cal_fn) == [
+            ("judge", "POSITIONAL_OR_KEYWORD"),
+            ("samples", "POSITIONAL_OR_KEYWORD"),
+            ("human_threshold", "KEYWORD_ONLY"),
+            ("score_divergence_threshold", "KEYWORD_ONLY"),
+            ("max_concurrency", "KEYWORD_ONLY"),
+        ]
+    assert set(JudgeConfig.model_fields) >= {
+        "schema_version",
+        "model",
+        "api_base",
+        "temperature",
+        "pass_threshold",
+        "max_retries",
+        "retry_backoff_seconds",
+        "timeout_seconds",
+        "local_only",
+        "mock_mode",
+        "seed",
+        "prompt_version",
+        "extra_params",
+    }
+    assert set(JudgeResponse.model_fields) >= {
+        "score",
+        "rationale",
+        "verdict",
+        "supported_claims",
+        "unsupported_claims",
+    }
+    assert set(HumanCalibrationSample.model_fields) >= {
+        "schema_version",
+        "case_id",
+        "input",
+        "output",
+        "reference",
+        "retrieved_chunks",
+        "human_score",
+        "human_passed",
+        "notes",
+        "metadata",
+    }
+    assert set(CalibrationDisagreement.model_fields) >= {
+        "case_id",
+        "disagreement_type",
+        "human_score",
+        "human_passed",
+        "judge_score",
+        "judge_status",
+        "judge_passed",
+        "score_delta",
+        "judge_rationale",
+        "human_notes",
+    }
+    assert set(CalibrationReport.model_fields) >= {
+        "schema_version",
+        "metric_id",
+        "metric_version",
+        "judge_config",
+        "judge_config_fingerprint",
+        "total_cases",
+        "valid_cases",
+        "inconclusive_cases",
+        "exact_agreement_rate",
+        "too_generous_rate",
+        "too_harsh_rate",
+        "mean_human_score",
+        "mean_judge_score",
+        "mean_score_delta",
+        "disagreements",
+        "recommended_pass_threshold",
     }

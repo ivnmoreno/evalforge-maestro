@@ -47,6 +47,14 @@ _SECRET_SUFFIXES = (
     "_credentials",
 )
 _KEY_NORMALIZE_RE = re.compile(r"[\s\-]+")
+_BEARER_TOKEN_RE = re.compile(r"(?i)\b(Bearer)\s+[A-Za-z0-9._\-+/=]+")
+_PROVIDER_TOKEN_RE = re.compile(
+    r"\b(?:sk-(?:proj-|live-|test-|svcacct-|ant-)?[A-Za-z0-9_-]{8,}|AIza[0-9A-Za-z_-]{20,}|hf_[A-Za-z0-9]{10,}|gsk_[A-Za-z0-9]{10,})\b"
+)
+_KV_SECRET_RE = re.compile(
+    r"(?i)\b(api[_-]?key|apikey|token|secret|password|passwd|passphrase|access[_-]?key|secret[_-]?key|client[_-]?secret|authorization)\b(\s*[=:]\s*)([^\s&'\",;]+)"
+)
+_URL_USERINFO_RE = re.compile(r"(https?://)([^:@/\s]+):([^@/\s]+)@")
 
 
 def round_score(value: float) -> float:
@@ -57,6 +65,20 @@ def round_score(value: float) -> float:
         value = 0.0
     elif 1.0 < value <= 1.0 + FLOAT_EPSILON:
         value = 1.0
+    rounded = round(float(value), SCORE_ROUND_DECIMALS)
+    return 0.0 if rounded == 0.0 else rounded
+
+
+def round_percentage(value: float) -> float:
+    """Validate finiteness in [0.0, 100.0] with epsilon clamp and round to 6 decimals."""
+    if not math.isfinite(value):
+        raise ValueError(f"Percentage value must be finite, got {value!r}")
+    if -FLOAT_EPSILON <= value < 0.0:
+        value = 0.0
+    elif 100.0 < value <= 100.0 + FLOAT_EPSILON:
+        value = 100.0
+    if not (0.0 <= value <= 100.0):
+        raise ValueError(f"Percentage value must be within [0.0, 100.0], got {value!r}")
     rounded = round(float(value), SCORE_ROUND_DECIMALS)
     return 0.0 if rounded == 0.0 else rounded
 
@@ -149,3 +171,12 @@ def redact_secrets(value: Any) -> Any:
     if isinstance(value, tuple):
         return [redact_secrets(item) for item in value]
     return value
+
+
+def scrub_secret_text(text: str) -> str:
+    """Scrub embedded provider keys, bearer tokens, and URL credentials from text."""
+    cleaned = _URL_USERINFO_RE.sub(rf"\1{REDACTED_VALUE}:{REDACTED_VALUE}@", text)
+    cleaned = _BEARER_TOKEN_RE.sub(rf"\1 {REDACTED_VALUE}", cleaned)
+    cleaned = _PROVIDER_TOKEN_RE.sub(REDACTED_VALUE, cleaned)
+    cleaned = _KV_SECRET_RE.sub(rf"\1\2{REDACTED_VALUE}", cleaned)
+    return cleaned

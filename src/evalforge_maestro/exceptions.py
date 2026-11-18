@@ -82,3 +82,11 @@ class StorageError(EvalforgeError):
 
 class ImmutabilityError(StorageError):
     """Raised when attempting to overwrite or mutate an immutable committed run artifact."""
+
+
+class JudgeError(EvalforgeError):
+    """Raised when model-based judge configuration or unrecoverable execution fails."""
+
+
+class LocalOnlyPolicyError(EvalforgeError):
+    """Raised pre-network when local-only policy blocks a remote or non-loopback endpoint."""

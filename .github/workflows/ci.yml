@@ -127,12 +127,33 @@ jobs:
           import evalforge_maestro
 
           assert "docpipe_maestro" not in sys.modules
+          assert "litellm" not in sys.modules
           try:
               evalforge_maestro.DocpipeAdapter()
           except evalforge_maestro.MissingExtraError as exc:
               assert "docpipe" in str(exc)
           else:
-              raise AssertionError("Expected MissingExtraError")
+              raise AssertionError("Expected MissingExtraError for docpipe")
+
+          judge = evalforge_maestro.GroundednessMetric(
+              config=evalforge_maestro.JudgeConfig(
+                  model="openai/gpt-4o-mini", local_only=False, mock_mode=False
+              )
+          )
+          case = evalforge_maestro.EvaluationCase(id="ci-1", input="SLA?")
+          exec_res = evalforge_maestro.ExecutionResult(
+              case_id="ci-1",
+              input="SLA?",
+              output="99.9%",
+              retrieved_chunks=[evalforge_maestro.RetrievedChunk(id="c1", text="99.9%")],
+              elapsed_seconds=0.0,
+          )
+          try:
+              judge.evaluate(case, exec_res)
+          except evalforge_maestro.MissingExtraError as exc:
+              assert "judges" in str(exc)
+          else:
+              raise AssertionError("Expected MissingExtraError for judges")
           PY
 
       - name: Verify clean sdist install on Linux
@@ -146,6 +167,7 @@ jobs:
           import evalforge_maestro
 
           assert "docpipe_maestro" not in sys.modules
+          assert "litellm" not in sys.modules
           PY
 
   optional-docpipe-compat:
@@ -165,3 +187,39 @@ jobs:
           uv sync --frozen --extra dev --extra docpipe
           uv run pytest --strict-markers -W error tests/test_library_purity.py
           uv run python -c "import sys, evalforge_maestro; assert 'docpipe_maestro' not in sys.modules; adapter = evalforge_maestro.DocpipeAdapter(mode='retrieve'); assert 'docpipe_maestro' in sys.modules"
+
+  optional-judges-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Sync with [judges] extra and verify lazy resolution, air-gap safety & purity
+        run: |
+          uv sync --frozen --extra dev --extra judges
+          uv run pytest --strict-markers -W error tests/test_library_purity.py tests/unit/test_judge_security.py
+          uv run python - <<'PY'
+          import os
+          import socket
+          import sys
+          import evalforge_maestro
+          from evalforge_maestro.judges.provider import _resolve_litellm
+
+          assert "litellm" not in sys.modules
+
+          def _blocked(*args, **kwargs):
+              raise RuntimeError("Network forbidden during air-gap litellm import")
+
+          socket.socket.connect = _blocked  # type: ignore[method-assign]
+          socket.create_connection = _blocked  # type: ignore[assignment]
+          mod = _resolve_litellm(local_only=True)
+          assert os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP") == "True"
+          assert mod is not None and "litellm" in sys.modules
+          PY
+          uv run pip-audit
