@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvalForge Maestro M1 Contract Schemas (v1.0)",
+  "$defs": {
+    "MetricStatus": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "WARNING", "INCONCLUSIVE", "NOT_APPLICABLE"]
+    },
+    "CaseMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tags": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "split": { "type": "string", "enum": ["eval", "train", "few_shot"], "default": "eval" },
+        "difficulty": { "type": ["string", "null"], "default": null },
+        "domain": { "type": ["string", "null"], "default": null },
+        "source": { "type": ["string", "null"], "default": null },
+        "extra": { "type": "object", "default": {} }
+      }
+    },
+    "CaseCriteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mandatory": { "type": "boolean", "default": false },
+        "json_schema": { "type": ["object", "null"], "default": null },
+        "pass_threshold": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0, "default": null },
+        "metric_thresholds": {
+          "type": "object",
+          "additionalProperties": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "default": {}
+        }
+      }
+    },
+    "EvaluationCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "input"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "input": {},
+        "reference": { "default": null },
+        "expected_context": { "type": ["array", "null"], "default": null },
+        "expected_tools": { "type": ["array", "null"], "items": { "type": "object" }, "default": null },
+        "metadata": { "$ref": "#/$defs/CaseMetadata" },
+        "criteria": { "$ref": "#/$defs/CaseCriteria" }
+      }
+    },
+    "TokenUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prompt_tokens": { "type": ["integer", "null"], "minimum": 0, "default": null },
+        "completion_tokens": { "type": ["integer", "null"], "minimum": 0, "default": null },
+        "reasoning_tokens": { "type": ["integer", "null"], "minimum": 0, "default": null },
+        "total_tokens": { "type": ["integer", "null"], "minimum": 0, "default": null }
+      }
+    },
+    "RetrievedChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "text": { "type": "string" },
+        "parent_id": { "type": ["string", "null"], "default": null },
+        "rank": { "type": ["integer", "null"], "default": null },
+        "score": { "type": ["number", "null"], "default": null },
+        "metadata": { "type": "object", "default": {} }
+      }
+    },
+    "ExecutionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "input", "elapsed_seconds"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "case_id": { "type": "string", "minLength": 1 },
+        "input": {},
+        "output": { "default": null },
+        "retrieved_chunks": { "type": "array", "items": { "$ref": "#/$defs/RetrievedChunk" }, "default": [] },
+        "trace": { "type": "array", "items": { "type": "object" }, "default": [] },
+        "tool_calls": { "type": "array", "items": { "type": "object" }, "default": [] },
+        "tokens": { "anyOf": [{ "$ref": "#/$defs/TokenUsage" }, { "type": "null" }], "default": null },
+        "elapsed_seconds": { "type": "number", "minimum": 0.0 },
+        "truncated": { "type": "boolean", "default": false },
+        "errors": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "warnings": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "system_version": { "type": ["string", "null"], "default": null },
+        "model_id": { "type": ["string", "null"], "default": null },
+        "config_fingerprint": { "type": ["string", "null"], "default": null },
+        "adapter_metadata": { "type": "object", "default": {} }
+      }
+    },
+    "MetricResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric_id", "metric_version", "status", "explanation"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "metric_id": { "type": "string", "minLength": 1 },
+        "metric_version": { "type": "string", "minLength": 1 },
+        "score": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0, "default": null },
+        "status": { "$ref": "#/$defs/MetricStatus" },
+        "label": { "type": ["string", "null"], "default": null },
+        "explanation": { "type": "string", "minLength": 1 },
+        "evidence": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "anomaly_flags": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "config_snapshot": { "type": "object", "default": {} }
+      }
+    },
+    "CaseEvaluationRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "execution", "metrics"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "case_id": { "type": "string", "minLength": 1 },
+        "mandatory": { "type": "boolean", "default": false },
+        "execution": { "$ref": "#/$defs/ExecutionResult" },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/MetricResult" }
+        }
+      }
+    },
+    "AggregateMetricSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric_id", "metric_version"],
+      "properties": {
+        "metric_id": { "type": "string", "minLength": 1 },
+        "metric_version": { "type": "string", "minLength": 1 },
+        "mean_score": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0, "default": null },
+        "applicable_count": { "type": "integer", "minimum": 0, "default": 0 },
+        "pass_count": { "type": "integer", "minimum": 0, "default": 0 },
+        "fail_count": { "type": "integer", "minimum": 0, "default": 0 },
+        "warning_count": { "type": "integer", "minimum": 0, "default": 0 },
+        "inconclusive_count": { "type": "integer", "minimum": 0, "default": 0 },
+        "not_applicable_count": { "type": "integer", "minimum": 0, "default": 0 }
+      }
+    },
+    "RunRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "timestamp",
+        "package_version",
+        "dataset_id",
+        "dataset_fingerprint",
+        "evaluated_case_count",
+        "metric_versions",
+        "aggregates",
+        "status_counts",
+        "case_results"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "run_id": { "type": "string", "minLength": 1 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "package_version": { "type": "string", "minLength": 1 },
+        "dataset_id": { "type": "string", "minLength": 1 },
+        "dataset_version": { "type": ["string", "null"], "default": null },
+        "dataset_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "evaluated_case_count": { "type": "integer", "minimum": 1 },
+        "dataset_capped": { "type": "boolean", "default": false },
+        "max_dataset_cases": { "type": ["integer", "null"], "minimum": 1, "default": null },
+        "system_version": { "type": ["string", "null"], "default": null },
+        "model_id": { "type": ["string", "null"], "default": null },
+        "config_fingerprint": { "type": ["string", "null"], "default": null },
+        "metric_versions": { "type": "object", "additionalProperties": { "type": "string" } },
+        "seed": { "type": ["integer", "null"], "default": null },
+        "aggregates": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/AggregateMetricSummary" }
+        },
+        "status_counts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "mandatory_failed_case_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "has_mandatory_failures": { "type": "boolean", "default": false },
+        "case_results": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CaseEvaluationRecord" }
+        }
+      }
+    },
+    "RunManifestEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "timestamp",
+        "package_version",
+        "dataset_id",
+        "dataset_fingerprint",
+        "evaluated_case_count",
+        "metric_versions",
+        "aggregate_scores",
+        "status_counts"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "run_id": { "type": "string", "minLength": 1 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "package_version": { "type": "string", "minLength": 1 },
+        "dataset_id": { "type": "string", "minLength": 1 },
+        "dataset_version": { "type": ["string", "null"], "default": null },
+        "dataset_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "evaluated_case_count": { "type": "integer", "minimum": 1 },
+        "dataset_capped": { "type": "boolean", "default": false },
+        "system_version": { "type": ["string", "null"], "default": null },
+        "config_fingerprint": { "type": ["string", "null"], "default": null },
+        "metric_versions": { "type": "object", "additionalProperties": { "type": "string" } },
+        "aggregate_scores": {
+          "type": "object",
+          "additionalProperties": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 }
+        },
+        "status_counts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "mandatory_failed_case_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "has_mandatory_failures": { "type": "boolean", "default": false }
+      }
+    }
+  }
+}
