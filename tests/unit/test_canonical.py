@@ -14,7 +14,9 @@ from evalforge_maestro._canonical import (
     canonical_sha256,
     redact_secrets,
     round_delta,
+    round_percentage,
     round_score,
+    scrub_secret_text,
 )
 
 
@@ -101,3 +103,24 @@ def test_redact_secrets_masks_credentials_without_false_positives() -> None:
     assert redacted["nested"][0]["temperature"] == 0.0
     assert redacted["tokens"]["total_tokens"] == 200
     assert redacted["tokens"]["auth_token"] == REDACTED_VALUE
+
+
+def test_round_percentage_and_scrub_secret_text() -> None:
+    assert round_percentage(-1e-12) == 0.0
+    assert math.copysign(1.0, round_percentage(-0.0)) == 1.0
+    assert round_percentage(100.0 + 1e-12) == 100.0
+    assert round_percentage(66.6666666) == 66.666667
+
+    for bad_pct in (float("nan"), -0.5, 101.0):
+        with pytest.raises(ValueError):
+            round_percentage(bad_pct)
+
+    scrubbed = scrub_secret_text(
+        "Failed calling https://user:pw@localhost:8000/v1 with Bearer tok123456 "
+        "and sk-proj-abcd12345678 and api_key=my_secret_val"
+    )
+    assert "pw" not in scrubbed
+    assert "tok123456" not in scrubbed
+    assert "sk-proj-abcd12345678" not in scrubbed
+    assert "my_secret_val" not in scrubbed
+    assert REDACTED_VALUE in scrubbed

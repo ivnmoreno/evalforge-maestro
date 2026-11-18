@@ -20,6 +20,8 @@ from evalforge_maestro.exceptions import (
     EvalforgeError,
     ExecutionError,
     ImmutabilityError,
+    JudgeError,
+    LocalOnlyPolicyError,
     MemoryLimitExceededError,
     MetricError,
     MissingExtraError,
@@ -31,6 +33,9 @@ from evalforge_maestro.types import (
     AnomalyScope,
     AnomalySeverity,
     AnomalyType,
+    CalibrationDisagreement,
+    CalibrationDisagreementType,
+    CalibrationReport,
     CaseCriteria,
     CaseEvaluationRecord,
     CaseMetadata,
@@ -42,6 +47,9 @@ from evalforge_maestro.types import (
     ExecutionResult,
     ExpectedContextItem,
     GateDecision,
+    HumanCalibrationSample,
+    JudgeConfig,
+    JudgeResponse,
     MetricMetadata,
     MetricResult,
     MetricStatus,
@@ -68,6 +76,8 @@ def test_exception_hierarchy_and_missing_extra_messages() -> None:
     assert issubclass(ExecutionError, EvalforgeError)
     assert issubclass(ImmutabilityError, StorageError)
     assert issubclass(StorageError, EvalforgeError)
+    assert issubclass(JudgeError, EvalforgeError)
+    assert issubclass(LocalOnlyPolicyError, EvalforgeError)
 
     err_extra = MissingExtraError(extra="judges", package="litellm")
     assert "evalforge-maestro[judges]" in str(err_extra)
@@ -442,3 +452,154 @@ def test_m3_enums_drift_anomaly_and_quality_gate_policy_contracts() -> None:
         QualityGatePolicy(min_metric_scores={" ": 0.5})
     with pytest.raises(ValidationError):
         QualityGatePolicy(min_metric_scores={"m": 1.2})
+
+
+def test_m4_judge_and_calibration_contracts_enforce_strict_validation() -> None:
+    cfg = JudgeConfig(
+        model=" ollama_chat/llama3.2 ",
+        api_base=" http://localhost:11434 ",
+        temperature=0.0,
+        pass_threshold=0.6666666,
+        max_retries=1,
+        retry_backoff_seconds=0.1,
+        timeout_seconds=15.0,
+        local_only=True,
+        mock_mode=False,
+        seed=42,
+        prompt_version=" 2.0 ",
+        extra_params={"api_key": "sk-secret", "custom": "ok"},
+    )
+    assert cfg.model == "ollama_chat/llama3.2"
+    assert cfg.api_base == "http://localhost:11434"
+    assert cfg.pass_threshold == 0.666667
+    assert cfg.prompt_version == "2.0"
+    assert cfg.extra_params["api_key"] == "[REDACTED]"
+    assert len(cfg.fingerprint) == 64
+
+    # Equal configs excluding redacted secret values emit identical fingerprints
+    cfg2 = cfg.model_copy(update={"extra_params": {"api_key": "different", "custom": "ok"}})
+    assert cfg.fingerprint == cfg2.fingerprint
+
+    for bad_url in (
+        "   ",
+        "http://localhost:8000 /v1",
+        "ftp://localhost:8000",
+        "http://",
+        "http://user:pass@localhost:8000",
+        "http://localhost:8000?api_key=secret",
+        "http://localhost:8000#frag",
+        "http://localhost:8000;params",
+    ):
+        with pytest.raises(ValidationError):
+            JudgeConfig(api_base=bad_url)
+
+    for bad_kwargs in (
+        {"model": "   "},
+        {"prompt_version": ""},
+        {"temperature": True},
+        {"temperature": float("nan")},
+        {"pass_threshold": True},
+        {"pass_threshold": 1.2},
+        {"max_retries": True},
+        {"max_retries": -1},
+        {"retry_backoff_seconds": True},
+        {"timeout_seconds": 0.0},
+        {"timeout_seconds": False},
+        {"seed": True},
+        {"extra_params": {"nan": float("inf")}},
+    ):
+        with pytest.raises(ValidationError):
+            JudgeConfig.model_validate(bad_kwargs)
+
+    resp = JudgeResponse(
+        score=0.75,
+        rationale=" Supported well. ",
+        verdict=" pass ",
+        supported_claims=[" claim a "],
+        unsupported_claims=[],
+    )
+    assert resp.rationale == "Supported well."
+    assert resp.verdict == "pass"
+    assert resp.supported_claims == ["claim a"]
+
+    for bad_resp in (
+        {"score": True, "rationale": "ok"},
+        {"score": float("nan"), "rationale": "ok"},
+        {"score": 1.05, "rationale": "ok"},
+        {"score": -0.1, "rationale": "ok"},
+        {"score": 0.5, "rationale": "   "},
+        {"score": 0.5, "rationale": "ok", "unsupported_claims": ["  "]},
+    ):
+        with pytest.raises(ValidationError):
+            JudgeResponse.model_validate(bad_resp)
+
+    sample = HumanCalibrationSample(
+        case_id=" c-1 ",
+        input="Q",
+        output="A",
+        human_score=0.8,
+        notes=" good ",
+        metadata={"token": "secret"},
+    )
+    assert sample.case_id == "c-1"
+    assert sample.notes == "good"
+    assert sample.metadata["token"] == "[REDACTED]"
+
+    with pytest.raises(ValidationError):
+        HumanCalibrationSample(case_id="c-x", input="Q", output="A")
+    with pytest.raises(ValidationError):
+        HumanCalibrationSample(case_id="c-x", input="Q", output="A", human_score=True)
+
+    dis = CalibrationDisagreement(
+        case_id="c-1",
+        disagreement_type=CalibrationDisagreementType.SCORE_DIVERGENCE,
+        human_score=0.9,
+        human_passed=True,
+        judge_score=0.55,
+        judge_status=MetricStatus.PASS,
+        judge_passed=True,
+        score_delta=-0.0,
+        judge_rationale="Minor delta.",
+    )
+    assert dis.score_delta == 0.0
+
+    with pytest.raises(ValidationError):
+        CalibrationReport(
+            metric_id="groundedness",
+            metric_version="1.0.0",
+            judge_config=cfg,
+            judge_config_fingerprint=cfg.fingerprint,
+            total_cases=2,
+            valid_cases=1,
+            inconclusive_cases=0,
+            pass_threshold_evaluated=0.5,
+            human_threshold_evaluated=0.5,
+            recommended_pass_threshold=0.5,
+        )
+    with pytest.raises(ValidationError):
+        CalibrationReport(
+            metric_id="groundedness",
+            metric_version="1.0.0",
+            judge_config=cfg,
+            judge_config_fingerprint=cfg.fingerprint,
+            total_cases=1,
+            valid_cases=0,
+            inconclusive_cases=1,
+            pass_threshold_evaluated=0.5,
+            human_threshold_evaluated=0.5,
+            exact_agreement_rate=100.0,
+            recommended_pass_threshold=0.5,
+        )
+    with pytest.raises(ValidationError):
+        CalibrationReport(
+            metric_id="groundedness",
+            metric_version="1.0.0",
+            judge_config=cfg,
+            judge_config_fingerprint=cfg.fingerprint,
+            total_cases=1,
+            valid_cases=1,
+            inconclusive_cases=0,
+            pass_threshold_evaluated=0.5,
+            human_threshold_evaluated=0.5,
+            recommended_pass_threshold=0.5,
+        )

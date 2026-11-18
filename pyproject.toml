@@ -44,6 +44,9 @@ Issues = "https://github.com/ivnmoreno/evalforge-maestro/issues"
 docpipe = [
     "docpipe-maestro>=0.2",
 ]
+judges = [
+    "litellm>=1.84.0",
+]
 dev = [
     "commitizen>=4.0",
     "mypy>=1.13",

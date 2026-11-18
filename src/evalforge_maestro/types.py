@@ -5,14 +5,21 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-from evalforge_maestro._canonical import round_delta, round_score
+from evalforge_maestro._canonical import (
+    canonical_sha256,
+    redact_secrets,
+    round_delta,
+    round_percentage,
+    round_score,
+)
 
 SCHEMA_VERSION: Literal["1.0"] = "1.0"
 _T = TypeVar("_T")
@@ -98,6 +105,15 @@ class CaseSplit(str, Enum):
     EVAL = "eval"
     TRAIN = "train"
     FEW_SHOT = "few_shot"
+
+
+class CalibrationDisagreementType(str, Enum):
+    """Category describing human-versus-judge agreement discrepancies."""
+
+    TOO_GENEROUS = "too_generous"
+    TOO_HARSH = "too_harsh"
+    SCORE_DIVERGENCE = "score_divergence"
+    INCONCLUSIVE = "inconclusive"
 
 
 def _ensure_json_serializable(value: _T, *, field_name: str) -> _T:
@@ -1318,3 +1334,350 @@ class Metric(Protocol):
         execution: ExecutionResult,
     ) -> MetricResult:
         """Evaluate one ExecutionResult against its EvaluationCase contract."""
+
+
+class JudgeConfig(_StrictModel):
+    """Secret-free, canonical configuration for a model-based judge."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    model: str = Field(default="mock-judge", min_length=1)
+    api_base: str | None = None
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    pass_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    max_retries: int = Field(default=2, ge=0, le=10)
+    retry_backoff_seconds: float = Field(default=0.5, ge=0.0, le=60.0)
+    timeout_seconds: float = Field(default=30.0, gt=0.0, le=600.0)
+    local_only: bool = False
+    mock_mode: bool = False
+    seed: int | None = None
+    prompt_version: str = Field(default="1.0", min_length=1)
+    extra_params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("model", "prompt_version")
+    @classmethod
+    def _validate_non_empty(cls, value: str, info: ValidationInfo) -> str:
+        return _ensure_non_empty_str(value, field_name=f"JudgeConfig.{info.field_name}")
+
+    @field_validator("api_base")
+    @classmethod
+    def _validate_api_base(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = _ensure_non_empty_str(value, field_name="JudgeConfig.api_base")
+        if any(ch.isspace() for ch in cleaned):
+            raise ValueError("JudgeConfig.api_base must not contain whitespace")
+        if "?" in cleaned or "#" in cleaned or ";" in cleaned:
+            raise ValueError("JudgeConfig.api_base must not include query parameters or fragments")
+        parsed = urlparse(cleaned)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("JudgeConfig.api_base must be an http/https URL with valid hostname")
+        if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+            raise ValueError("JudgeConfig.api_base must not include embedded URL credentials")
+        return cleaned
+
+    @field_validator("temperature", "retry_backoff_seconds", "timeout_seconds", mode="before")
+    @classmethod
+    def _validate_float_params(cls, value: Any, info: ValidationInfo) -> Any:
+        _reject_bool_number(value, field_name=f"JudgeConfig.{info.field_name}")
+        return value
+
+    @field_validator("pass_threshold", mode="before")
+    @classmethod
+    def _validate_pass_threshold(cls, value: Any) -> Any:
+        _reject_bool_number(value, field_name="JudgeConfig.pass_threshold")
+        return round_score(float(value))
+
+    @field_validator("max_retries", mode="before")
+    @classmethod
+    def _validate_max_retries(cls, value: Any) -> int:
+        return _reject_strict_int(value, field_name="JudgeConfig.max_retries")
+
+    @field_validator("seed", mode="before")
+    @classmethod
+    def _validate_seed(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name="JudgeConfig.seed")
+
+    @field_validator("extra_params")
+    @classmethod
+    def _validate_extra_params(cls, value: dict[str, Any]) -> dict[str, Any]:
+        checked = _ensure_json_serializable(value, field_name="JudgeConfig.extra_params")
+        sanitized = redact_secrets(checked)
+        if not isinstance(sanitized, dict):  # pragma: no cover - defensive guard
+            raise ValueError("JudgeConfig.extra_params must be a JSON object")
+        return sanitized
+
+    def redacted_dict(self) -> dict[str, Any]:
+        """Return redacted canonical dictionary representation safe for persistence."""
+        payload = self.model_dump(mode="json")
+        sanitized = redact_secrets(payload)
+        if not isinstance(sanitized, dict):  # pragma: no cover - defensive guard
+            raise ValueError("JudgeConfig redacted payload must be a dict")
+        return sanitized
+
+    @property
+    def fingerprint(self) -> str:
+        """Compute deterministic canonical SHA-256 over redacted judge configuration."""
+        return canonical_sha256(self.redacted_dict())
+
+
+class JudgeResponse(_StrictModel):
+    """Strict structured response contract required from model-based judges."""
+
+    score: float = Field(ge=0.0, le=1.0)
+    rationale: str = Field(min_length=1)
+    verdict: str | None = None
+    supported_claims: list[str] = Field(default_factory=list)
+    unsupported_claims: list[str] = Field(default_factory=list)
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def _validate_score(cls, value: Any) -> float:
+        _reject_bool_number(value, field_name="JudgeResponse.score")
+        return round_score(float(value))
+
+    @field_validator("rationale")
+    @classmethod
+    def _validate_rationale(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="JudgeResponse.rationale")
+
+    @field_validator("verdict")
+    @classmethod
+    def _validate_verdict(cls, value: str | None) -> str | None:
+        return _validate_optional_str(value, field_name="JudgeResponse.verdict")
+
+    @field_validator("supported_claims", "unsupported_claims")
+    @classmethod
+    def _validate_claims(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        return [
+            _ensure_non_empty_str(item, field_name=f"JudgeResponse.{info.field_name}")
+            for item in value
+        ]
+
+
+class HumanCalibrationSample(_StrictModel):
+    """Human ground-truth labeled sample used to calibrate a judge metric."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    case_id: str = Field(min_length=1)
+    input: Any
+    output: Any
+    reference: Any = None
+    retrieved_chunks: list[RetrievedChunk] = Field(default_factory=list)
+    human_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    human_passed: bool | None = None
+    notes: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("case_id")
+    @classmethod
+    def _validate_case_id(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="HumanCalibrationSample.case_id")
+
+    @field_validator("input", "output", "reference")
+    @classmethod
+    def _validate_payloads(cls, value: Any, info: ValidationInfo) -> Any:
+        return _ensure_json_serializable(
+            value, field_name=f"HumanCalibrationSample.{info.field_name}"
+        )
+
+    @field_validator("human_score", mode="before")
+    @classmethod
+    def _validate_human_score(cls, value: Any) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name="HumanCalibrationSample.human_score")
+        return round_score(float(value))
+
+    @field_validator("notes")
+    @classmethod
+    def _validate_notes(cls, value: str | None) -> str | None:
+        return _validate_optional_str(value, field_name="HumanCalibrationSample.notes")
+
+    @field_validator("metadata")
+    @classmethod
+    def _validate_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        checked = _ensure_json_serializable(value, field_name="HumanCalibrationSample.metadata")
+        sanitized = redact_secrets(checked)
+        if not isinstance(sanitized, dict):  # pragma: no cover - defensive guard
+            raise ValueError("HumanCalibrationSample.metadata must be a JSON object")
+        return sanitized
+
+    @model_validator(mode="after")
+    def _validate_human_label_present(self) -> HumanCalibrationSample:
+        if self.human_score is None and self.human_passed is None:
+            raise ValueError(
+                "HumanCalibrationSample requires at least one of human_score or human_passed"
+            )
+        return self
+
+
+class CalibrationDisagreement(_StrictModel):
+    """Per-case human-versus-judge disagreement or inconclusive inspection record."""
+
+    case_id: str = Field(min_length=1)
+    disagreement_type: CalibrationDisagreementType
+    human_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    human_passed: bool
+    judge_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    judge_status: MetricStatus
+    judge_passed: bool | None = None
+    score_delta: float | None = Field(default=None, ge=-1.0, le=1.0)
+    judge_rationale: str = Field(min_length=1)
+    human_notes: str | None = None
+
+    @field_validator("case_id", "judge_rationale")
+    @classmethod
+    def _validate_required_str(cls, value: str, info: ValidationInfo) -> str:
+        return _ensure_non_empty_str(value, field_name=f"CalibrationDisagreement.{info.field_name}")
+
+    @field_validator("human_score", "judge_score", mode="before")
+    @classmethod
+    def _validate_opt_scores(cls, value: Any, info: ValidationInfo) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name=f"CalibrationDisagreement.{info.field_name}")
+        return round_score(float(value))
+
+    @field_validator("score_delta", mode="before")
+    @classmethod
+    def _validate_score_delta(cls, value: Any) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name="CalibrationDisagreement.score_delta")
+        return round_delta(float(value))
+
+    @field_validator("human_notes")
+    @classmethod
+    def _validate_human_notes(cls, value: str | None) -> str | None:
+        return _validate_optional_str(value, field_name="CalibrationDisagreement.human_notes")
+
+
+class CalibrationReport(_StrictModel):
+    """Schema-versioned human ground-truth calibration summary and threshold recommendation."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    metric_id: str = Field(min_length=1)
+    metric_version: str = Field(min_length=1)
+    judge_config: JudgeConfig
+    judge_config_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    total_cases: int = Field(ge=1)
+    valid_cases: int = Field(ge=0)
+    inconclusive_cases: int = Field(ge=0)
+    pass_threshold_evaluated: float = Field(ge=0.0, le=1.0)
+    human_threshold_evaluated: float = Field(ge=0.0, le=1.0)
+    score_divergence_threshold: float = Field(default=0.25, gt=0.0, le=1.0)
+    exact_agreement_rate: float | None = Field(default=None, ge=0.0, le=100.0)
+    too_generous_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    too_harsh_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    mean_human_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    mean_judge_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    mean_score_delta: float | None = Field(default=None, ge=-1.0, le=1.0)
+    disagreements: list[CalibrationDisagreement] = Field(default_factory=list)
+    recommended_pass_threshold: float = Field(ge=0.0, le=1.0)
+
+    @field_validator("metric_id", "metric_version")
+    @classmethod
+    def _validate_metric_ids(cls, value: str, info: ValidationInfo) -> str:
+        return _ensure_non_empty_str(value, field_name=f"CalibrationReport.{info.field_name}")
+
+    @field_validator("total_cases", "valid_cases", "inconclusive_cases", mode="before")
+    @classmethod
+    def _validate_case_counts(cls, value: Any, info: ValidationInfo) -> int:
+        return _reject_strict_int(value, field_name=f"CalibrationReport.{info.field_name}")
+
+    @field_validator(
+        "pass_threshold_evaluated",
+        "human_threshold_evaluated",
+        "score_divergence_threshold",
+        "recommended_pass_threshold",
+        mode="before",
+    )
+    @classmethod
+    def _validate_thresholds(cls, value: Any, info: ValidationInfo) -> float:
+        _reject_bool_number(value, field_name=f"CalibrationReport.{info.field_name}")
+        return round_score(float(value))
+
+    @field_validator("exact_agreement_rate", mode="before")
+    @classmethod
+    def _validate_agreement_pct(cls, value: Any) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name="CalibrationReport.exact_agreement_rate")
+        return round_percentage(float(value))
+
+    @field_validator(
+        "too_generous_rate",
+        "too_harsh_rate",
+        "mean_human_score",
+        "mean_judge_score",
+        mode="before",
+    )
+    @classmethod
+    def _validate_opt_unit_metrics(cls, value: Any, info: ValidationInfo) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name=f"CalibrationReport.{info.field_name}")
+        return round_score(float(value))
+
+    @field_validator("mean_score_delta", mode="before")
+    @classmethod
+    def _validate_mean_score_delta(cls, value: Any) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name="CalibrationReport.mean_score_delta")
+        return round_delta(float(value))
+
+    @model_validator(mode="after")
+    def _validate_report_consistency(self) -> CalibrationReport:
+        if self.valid_cases + self.inconclusive_cases != self.total_cases:
+            raise ValueError(
+                "CalibrationReport requires valid_cases + inconclusive_cases == total_cases"
+            )
+        summary_values = (
+            self.exact_agreement_rate,
+            self.too_generous_rate,
+            self.too_harsh_rate,
+            self.mean_human_score,
+            self.mean_judge_score,
+            self.mean_score_delta,
+        )
+        if self.valid_cases == 0:
+            if any(v is not None for v in summary_values):
+                raise ValueError(
+                    "CalibrationReport summary metrics must be None when valid_cases == 0"
+                )
+        elif any(v is None for v in summary_values):
+            raise ValueError(
+                "CalibrationReport summary metrics must not be None when valid_cases > 0"
+            )
+        return self
+
+
+@runtime_checkable
+class AsyncBatchMetric(Protocol):
+    """Protocol for async batch-capable metrics preserving context-grouped dispatch."""
+
+    @property
+    def metadata(self) -> MetricMetadata:
+        """Return formal metric metadata declaration."""
+
+    @property
+    def judge_config_fingerprint(self) -> str | None:
+        """Return canonical SHA-256 provenance fingerprint for this metric configuration."""
+
+    def evaluate(
+        self,
+        case: EvaluationCase,
+        execution: ExecutionResult,
+    ) -> MetricResult:
+        """Evaluate one case synchronously."""
+
+    async def aevaluate_batch(
+        self,
+        items: Sequence[tuple[EvaluationCase, ExecutionResult]],
+        *,
+        max_concurrency: int = 4,
+    ) -> list[MetricResult]:
+        """Evaluate a sequence of case/execution pairs concurrently under max_concurrency."""

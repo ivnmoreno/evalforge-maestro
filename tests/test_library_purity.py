@@ -93,6 +93,7 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                     "datasets",
                     "adapters",
                     "metrics",
+                    "judges",
                     "execution",
                     "storage",
                     "regression",
@@ -101,13 +102,35 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                         f"Leaf module {rel} must not import {mod!r}"
                     )
 
-        # Pure computational modules (regression/, metrics/) never import I/O/adapters
+        # Pure computational modules (regression/, metrics/) never import I/O/adapters/judges
         if rel.startswith(("regression/", "metrics/")):
             for mod in imports:
-                for forbidden_sub in ("adapters", "execution", "storage"):
+                for forbidden_sub in ("adapters", "execution", "storage", "judges"):
                     assert not mod.startswith(f"evalforge_maestro.{forbidden_sub}"), (
                         f"Pure module {rel} must not import {mod!r}"
                     )
+
+        # Judge subsystem imports only leaf contracts/helpers and keeps litellm lazy
+        if rel.startswith("judges/"):
+            for mod in imports:
+                for forbidden_sub in (
+                    "adapters",
+                    "datasets",
+                    "execution",
+                    "storage",
+                    "metrics",
+                    "regression",
+                ):
+                    assert not mod.startswith(f"evalforge_maestro.{forbidden_sub}"), (
+                        f"Judge module {rel} must not import {mod!r}"
+                    )
+            module_ast = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+            for top_node in module_ast.body:
+                if isinstance(top_node, ast.Import):
+                    for alias in top_node.names:
+                        assert not alias.name.startswith("litellm")
+                elif isinstance(top_node, ast.ImportFrom) and top_node.module:
+                    assert not top_node.module.startswith("litellm")
 
         # Core/domain modules must never import docpipe_maestro, langchain, or llama_index
         source_text = py_file.read_text(encoding="utf-8")
@@ -162,3 +185,23 @@ def test_cold_start_import_loads_no_heavy_optional_dependencies() -> None:
         text=True,
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
+
+    # Offline mock judge + calibration execution also keeps litellm absent from sys.modules
+    mock_probe = (
+        "import sys; "
+        "from evalforge_maestro import GroundednessMetric, HumanCalibrationSample, "
+        "JudgeConfig, RetrievedChunk, calibrate_judge; "
+        "m = GroundednessMetric(config=JudgeConfig(mock_mode=True, local_only=True)); "
+        "s = HumanCalibrationSample(case_id='p1', input='SLA', output='99.9% SLA', "
+        "retrieved_chunks=[RetrievedChunk(id='c1', text='99.9% SLA')], human_passed=True); "
+        "rep = calibrate_judge(m, [s]); "
+        "assert rep.exact_agreement_rate == 100.0; "
+        "assert 'litellm' not in sys.modules"
+    )
+    proc_mock = subprocess.run(
+        [sys.executable, "-c", mock_probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc_mock.returncode == 0, proc_mock.stderr or proc_mock.stdout
