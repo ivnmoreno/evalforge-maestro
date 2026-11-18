@@ -22,9 +22,16 @@ _FORBIDDEN_CONFIG_AND_CLI_MODULES = frozenset(
     }
 )
 _FORBIDDEN_ADAPTER_MODULES = frozenset({"adapters", "evalforge_maestro.adapters"})
+_FORBIDDEN_RAG_FRAMEWORK_PREFIXES = (
+    "docpipe_maestro",
+    "langchain",
+    "llama_index",
+)
 _HEAVY_OPTIONAL_MODULES = (
     "litellm",
     "docpipe_maestro",
+    "langchain",
+    "llama_index",
     "numpy",
     "scipy",
     "jsonschema",
@@ -87,6 +94,28 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                         f"Leaf module {rel} must not import {mod!r}"
                     )
 
+        # Core/domain modules must never import docpipe_maestro, langchain, or llama_index
+        source_text = py_file.read_text(encoding="utf-8")
+        if not rel.startswith("adapters/"):
+            for mod in imports:
+                for forbidden in _FORBIDDEN_RAG_FRAMEWORK_PREFIXES:
+                    assert mod != forbidden and not mod.startswith(f"{forbidden}."), (
+                        f"Non-adapter module {rel} must not import {mod!r}"
+                    )
+            for forbidden in _FORBIDDEN_RAG_FRAMEWORK_PREFIXES:
+                assert forbidden not in source_text, (
+                    f"Non-adapter module {rel} must not reference optional package {forbidden!r}"
+                )
+        elif rel == "adapters/docpipe.py":
+            # Ensure adapters/docpipe.py keeps docpipe_maestro lazy (no top-level import)
+            module_ast = ast.parse(source_text, filename=str(py_file))
+            for top_node in module_ast.body:
+                if isinstance(top_node, ast.Import):
+                    for alias in top_node.names:
+                        assert not alias.name.startswith("docpipe_maestro")
+                elif isinstance(top_node, ast.ImportFrom) and top_node.module:
+                    assert not top_node.module.startswith("docpipe_maestro")
+
         # Zero stdout print() or root logger mutation in library modules
         assert "print" not in calls, f"Library module {rel} must not call print()"
         assert "basicConfig" not in calls, f"Library module {rel} must not call basicConfig()"
@@ -95,6 +124,9 @@ def test_library_ast_import_and_logging_boundaries() -> None:
 
 
 def test_package_logger_uses_null_handler_only() -> None:
+    import evalforge_maestro
+
+    _ = evalforge_maestro
     pkg_logger = logging.getLogger("evalforge_maestro")
     assert any(isinstance(h, logging.NullHandler) for h in pkg_logger.handlers)
     assert all(isinstance(h, logging.NullHandler) for h in pkg_logger.handlers)

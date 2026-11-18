@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from importlib.metadata import PackageNotFoundError, version
 
-from evalforge_maestro.adapters import CallableAdapter
-from evalforge_maestro.datasets import DatasetEngine, DatasetStreamResult
+from evalforge_maestro.adapters import CallableAdapter, DocpipeAdapter, RAGAdapter
+from evalforge_maestro.datasets import DatasetEngine, DatasetStreamResult, load_docpipe_fixture
 from evalforge_maestro.exceptions import (
     AdapterError,
     ConfigurationError,
@@ -24,11 +24,21 @@ from evalforge_maestro.exceptions import (
 from evalforge_maestro.execution import EvaluationOrchestrator
 from evalforge_maestro.metrics import (
     ExactMatchMetric,
+    HitRateAtKMetric,
     JsonSchemaValidationMetric,
+    MRRMetric,
+    NDCGAtKMetric,
     NormalizedMatchMetric,
+    PrecisionAtKMetric,
+    RecallAtKMetric,
     exact_match,
+    hit_rate_at_k,
     json_schema_validation,
+    mrr,
+    ndcg_at_k,
     normalized_match,
+    precision_at_k,
+    recall_at_k,
 )
 from evalforge_maestro.storage import LocalRunStore
 from evalforge_maestro.types import (
@@ -40,11 +50,13 @@ from evalforge_maestro.types import (
     CaseSplit,
     EvaluationCase,
     ExecutionResult,
+    ExpectedContextItem,
     Metric,
     MetricMetadata,
     MetricResult,
     MetricStatus,
     OrchestratorConfig,
+    RAGExtractorConfig,
     RetrievedChunk,
     RunManifestEntry,
     RunRecord,
@@ -72,6 +84,7 @@ __all__ = [
     "DatasetEngine",
     "DatasetError",
     "DatasetStreamResult",
+    "DocpipeAdapter",
     "DuplicateCaseIdError",
     "EmptyDatasetError",
     "EvalforgeError",
@@ -80,9 +93,12 @@ __all__ = [
     "ExactMatchMetric",
     "ExecutionError",
     "ExecutionResult",
+    "ExpectedContextItem",
+    "HitRateAtKMetric",
     "ImmutabilityError",
     "JsonSchemaValidationMetric",
     "LocalRunStore",
+    "MRRMetric",
     "MemoryLimitExceededError",
     "Metric",
     "MetricError",
@@ -90,8 +106,13 @@ __all__ = [
     "MetricResult",
     "MetricStatus",
     "MissingExtraError",
+    "NDCGAtKMetric",
     "NormalizedMatchMetric",
     "OrchestratorConfig",
+    "PrecisionAtKMetric",
+    "RAGAdapter",
+    "RAGExtractorConfig",
+    "RecallAtKMetric",
     "RetrievedChunk",
     "RunManifestEntry",
     "RunRecord",
@@ -100,6 +121,12 @@ __all__ = [
     "TokenUsage",
     "__version__",
     "exact_match",
+    "hit_rate_at_k",
     "json_schema_validation",
+    "load_docpipe_fixture",
+    "mrr",
+    "ndcg_at_k",
     "normalized_match",
+    "precision_at_k",
+    "recall_at_k",
 ]

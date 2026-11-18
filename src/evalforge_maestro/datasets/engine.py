@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -180,3 +180,20 @@ class DatasetEngine:
         for _ in self.iter_cases(max_cases=max_cases, on_complete=captured.append):
             pass
         return captured[0]
+
+    @classmethod
+    def from_docpipe_fixture(
+        cls,
+        source: Path | str | Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+    ) -> DatasetEngine:
+        """Import a docpipe-maestro JSON/JSONL fixture without docpipe installed."""
+        from evalforge_maestro.datasets.docpipe_fixture import load_docpipe_fixture
+
+        return load_docpipe_fixture(
+            source,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+        )

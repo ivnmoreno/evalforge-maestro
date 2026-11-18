@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import socket
+import threading
 from collections.abc import Iterator
 from typing import Any
 
@@ -34,16 +35,30 @@ def _hermetic_isolation(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     orig_connect = socket.socket.connect
     orig_connect_ex = socket.socket.connect_ex
+    orig_socketpair = socket.socketpair
+    socketpair_state = threading.local()
+
+    def _in_socketpair() -> bool:
+        return int(getattr(socketpair_state, "depth", 0)) > 0
+
+    def _allowed_socketpair(*args: Any, **kwargs: Any) -> tuple[socket.socket, socket.socket]:
+        # On Windows, asyncio ProactorEventLoop self-pipes call socketpair() over AF_INET loopback.
+        depth = int(getattr(socketpair_state, "depth", 0))
+        socketpair_state.depth = depth + 1
+        try:
+            return orig_socketpair(*args, **kwargs)
+        finally:
+            socketpair_state.depth = depth
 
     def _blocked_connect(self: socket.socket, address: Any) -> Any:
-        if self.family in (socket.AF_INET, socket.AF_INET6):
+        if self.family in (socket.AF_INET, socket.AF_INET6) and not _in_socketpair():
             raise RuntimeError(
                 f"Outbound network connection blocked in hermetic test suite: {address!r}"
             )
         return orig_connect(self, address)
 
     def _blocked_connect_ex(self: socket.socket, address: Any) -> int:
-        if self.family in (socket.AF_INET, socket.AF_INET6):
+        if self.family in (socket.AF_INET, socket.AF_INET6) and not _in_socketpair():
             raise RuntimeError(
                 f"Outbound network connection blocked in hermetic test suite: {address!r}"
             )
@@ -54,6 +69,7 @@ def _hermetic_isolation(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
             f"Outbound socket.create_connection blocked in hermetic test suite: {args!r}"
         )
 
+    monkeypatch.setattr(socket, "socketpair", _allowed_socketpair)
     monkeypatch.setattr(socket.socket, "connect", _blocked_connect)
     monkeypatch.setattr(socket.socket, "connect_ex", _blocked_connect_ex)
     monkeypatch.setattr(socket, "create_connection", _blocked_create_connection)

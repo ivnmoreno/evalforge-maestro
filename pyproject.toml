@@ -9,14 +9,45 @@ description = "Independent LLM evaluation and regression verification engine"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+keywords = [
+    "llm-evaluation",
+    "rag-evaluation",
+    "information-retrieval",
+    "regression-testing",
+    "ai-quality-gates",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 dependencies = [
     "pydantic>=2.7,<3",
     "jsonschema>=4.23,<5",
 ]
 
+[project.urls]
+Homepage = "https://github.com/ivnmoreno/evalforge-maestro"
+Repository = "https://github.com/ivnmoreno/evalforge-maestro"
+Issues = "https://github.com/ivnmoreno/evalforge-maestro/issues"
+
 [project.optional-dependencies]
+docpipe = [
+    "docpipe-maestro>=0.2",
+]
 dev = [
+    "commitizen>=4.0",
     "mypy>=1.13",
+    "pip-audit>=2.7",
     "pytest>=8.3",
     "pytest-cov>=5.0",
     "ruff>=0.8",
@@ -64,3 +95,8 @@ source = ["src/evalforge_maestro"]
 [tool.coverage.report]
 fail_under = 85
 show_missing = true
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "scm"
+tag_format = "v$version"

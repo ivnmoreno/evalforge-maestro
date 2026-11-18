@@ -33,10 +33,12 @@ from evalforge_maestro.types import (
     CaseSplit,
     EvaluationCase,
     ExecutionResult,
+    ExpectedContextItem,
     MetricMetadata,
     MetricResult,
     MetricStatus,
     OrchestratorConfig,
+    RAGExtractorConfig,
     RetrievedChunk,
     RunManifestEntry,
     RunRecord,
@@ -241,3 +243,89 @@ def test_run_record_manifest_orchestrator_config_and_schema_parity() -> None:
     _validate_def("CaseEvaluationRecord", case_rec.model_dump(mode="json"))
     _validate_def("RunRecord", run.model_dump(mode="json"))
     _validate_def("RunManifestEntry", manifest.model_dump(mode="json"))
+
+
+def test_m2_expected_context_retrieved_chunk_rag_extractor_and_schema_parity() -> None:
+    item = ExpectedContextItem(id="  chunk-2  ", text="passage", relevance=3)
+    assert item.id == "chunk-2"
+    assert item.relevance == 3
+
+    case = EvaluationCase(
+        id="c-rag",
+        input="What is M2?",
+        expected_context=["  chunk-1 ", {"id": "chunk-3", "relevance": 2}, item],  # type: ignore[list-item]
+    )
+    assert case.expected_context is not None
+    assert len(case.expected_context) == 3
+    assert case.expected_context[0] == "chunk-1"
+    assert isinstance(case.expected_context[1], ExpectedContextItem)
+    assert case.expected_context[1].id == "chunk-3"
+
+    # Duplicate effective IDs (string vs ExpectedContextItem) must fail
+    with pytest.raises(ValidationError):
+        EvaluationCase(
+            id="c-dup",
+            input="q",
+            expected_context=["chunk-1", ExpectedContextItem(id="chunk-1", relevance=2)],
+        )
+
+    with pytest.raises(ValidationError):
+        EvaluationCase(id="c-dup-str", input="q", expected_context=["chunk-1", " chunk-1 "])
+
+    with pytest.raises(ValidationError):
+        EvaluationCase(id="c-blank-ctx", input="q", expected_context=["   "])
+
+    for bad_rel in (-1, True, 1.5, 1.0, float("nan")):
+        with pytest.raises(ValidationError):
+            ExpectedContextItem(id="c1", relevance=bad_rel)  # type: ignore[arg-type]
+
+    with pytest.raises(ValidationError):
+        ExpectedContextItem(id="   ")
+
+    # RetrievedChunk bounds: rank >= 1 (int, not bool/float) and finite non-bool score
+    chunk = RetrievedChunk(id=" ch-1 ", text="", parent_id="doc-1", rank=1, score=0.75)
+    assert chunk.id == "ch-1"
+    for bad_rank in (0, -2, True, 1.0, 1.5):
+        with pytest.raises(ValidationError):
+            RetrievedChunk(id="ch-1", text="t", rank=bad_rank)  # type: ignore[arg-type]
+
+    for bad_score in (True, float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValidationError):
+            RetrievedChunk(id="ch-1", text="t", score=bad_score)
+
+    # RAGExtractorConfig strict config + whitespace path rejection
+    def _extract(payload: Any) -> Any:
+        return payload
+
+    ext_cfg = RAGExtractorConfig(
+        output="answer.text",
+        chunks=_extract,
+        chunk_id="id",
+        chunk_text="content",
+        chunk_parent_id="metadata.parent_id",
+        chunk_rank="rank",
+        chunk_score="score",
+        chunk_metadata="metadata",
+        tokens="usage",
+    )
+    assert ext_cfg.output == "answer.text"
+    with pytest.raises(ValidationError):
+        RAGExtractorConfig(output="   ")
+    with pytest.raises(ValidationError):
+        RAGExtractorConfig.model_validate({"unknown_field": "x"})
+
+    # Parity check against specs/002-retrieval-rag-evaluation/contracts/schemas-v1.json
+    m2_schema_path = Path("specs/002-retrieval-rag-evaluation/contracts/schemas-v1.json")
+    m2_schema: dict[str, Any] = json.loads(m2_schema_path.read_text(encoding="utf-8"))
+    m2_defs = m2_schema["$defs"]
+
+    def _validate_m2(def_name: str, payload: Any) -> None:
+        sub_schema = {"$schema": m2_schema["$schema"], "$defs": m2_defs, **m2_defs[def_name]}
+        jsonschema.validate(instance=payload, schema=sub_schema)
+
+    _validate_m2("ExpectedContextItem", item.model_dump(mode="json"))
+    _validate_m2(
+        "EvaluationCaseExpectedContext",
+        case.model_dump(mode="json")["expected_context"],
+    )
+    _validate_m2("RetrievedChunk", chunk.model_dump(mode="json"))

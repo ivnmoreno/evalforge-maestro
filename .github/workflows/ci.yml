@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality-and-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Sync locked dev environment
+        run: uv sync --frozen --extra dev
+
+      - name: Verify lockfile freshness
+        run: uv lock --check
+
+      - name: Verify formatting and lint (including Bandit security rules)
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run ruff check --select S src/
+
+      - name: Strict static type checking
+        run: uv run mypy --strict src tests
+
+      - name: Full suite with >=85% branch coverage
+        run: >
+          uv run pytest --strict-markers -W error
+          --cov=evalforge_maestro --cov-branch --cov-fail-under=85
+
+      - name: Deterministic metrics 100% branch coverage
+        run: >
+          uv run pytest --strict-markers -W error
+          --cov=evalforge_maestro.metrics --cov-branch --cov-fail-under=100
+          tests/unit/test_metrics.py
+          tests/unit/test_ir_metrics.py
+          tests/contract/test_metric_formulas.py
+
+      - name: Mandatory release gate markers
+        run: uv run pytest --strict-markers -W error -m "gate_determinism or gate_immutability"
+
+      - name: Dependency vulnerability scan (pip-audit)
+        run: |
+          uv export --frozen --no-emit-project --quiet -o "$RUNNER_TEMP/requirements.txt"
+          uv run pip-audit -r "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip --strict
+          uv run pip-audit --skip-editable
+
+      - name: Validate Conventional Commits
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            uv run cz check --rev-range "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif git rev-parse HEAD~1 >/dev/null 2>&1; then
+            uv run cz check --rev-range "HEAD~1..HEAD"
+          else
+            git log -1 --pretty=%B > "$RUNNER_TEMP/commit_msg.txt"
+            uv run cz check --commit-msg-file "$RUNNER_TEMP/commit_msg.txt"
+          fi
+
+  cross-os-and-packaging:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync and run full test suite across OS/Python matrix
+        shell: bash
+        run: |
+          uv sync --frozen --extra dev
+          uv run pytest --strict-markers -W error
+
+      - name: Build and strictly validate wheel & sdist
+        shell: bash
+        run: |
+          uv build
+          uv run twine check --strict dist/*
+
+      - name: Verify clean minimal wheel install (--no-dev)
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/clean-wheel-venv"
+          uv venv "$RUNNER_TEMP/clean-wheel-venv" --python "${{ matrix.python-version }}"
+          if [ -f "$RUNNER_TEMP/clean-wheel-venv/bin/python" ]; then
+            VENV_PY="$RUNNER_TEMP/clean-wheel-venv/bin/python"
+          else
+            VENV_PY="$RUNNER_TEMP/clean-wheel-venv/Scripts/python.exe"
+          fi
+          uv pip install --python "$VENV_PY" dist/*.whl
+          "$VENV_PY" - <<'PY'
+          import sys
+          import evalforge_maestro
+
+          assert "docpipe_maestro" not in sys.modules
+          try:
+              evalforge_maestro.DocpipeAdapter()
+          except evalforge_maestro.MissingExtraError as exc:
+              assert "docpipe" in str(exc)
+          else:
+              raise AssertionError("Expected MissingExtraError")
+          PY
+
+      - name: Verify clean sdist install on Linux
+        if: runner.os == 'Linux' && matrix.python-version == '3.13'
+        shell: bash
+        run: |
+          uv venv "$RUNNER_TEMP/clean-sdist-venv" --python "${{ matrix.python-version }}"
+          uv pip install --python "$RUNNER_TEMP/clean-sdist-venv/bin/python" dist/*.tar.gz
+          "$RUNNER_TEMP/clean-sdist-venv/bin/python" - <<'PY'
+          import sys
+          import evalforge_maestro
+
+          assert "docpipe_maestro" not in sys.modules
+          PY
+
+  optional-docpipe-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Sync with [docpipe] extra and verify lazy resolution & purity
+        run: |
+          uv sync --frozen --extra dev --extra docpipe
+          uv run pytest --strict-markers -W error tests/test_library_purity.py
+          uv run python -c "import sys, evalforge_maestro; assert 'docpipe_maestro' not in sys.modules; adapter = evalforge_maestro.DocpipeAdapter(mode='retrieve'); assert 'docpipe_maestro' in sys.modules"
