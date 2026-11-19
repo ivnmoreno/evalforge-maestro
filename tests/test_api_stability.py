@@ -7,7 +7,16 @@ from collections.abc import Callable
 from typing import Any
 
 import evalforge_maestro
-from evalforge_maestro import adapters, datasets, execution, judges, metrics, regression, storage
+from evalforge_maestro import (
+    adapters,
+    datasets,
+    execution,
+    judges,
+    metrics,
+    regression,
+    reporting,
+    storage,
+)
 from evalforge_maestro.exceptions import (
     AdapterError,
     ConfigurationError,
@@ -25,10 +34,16 @@ from evalforge_maestro.exceptions import (
     StorageError,
 )
 from evalforge_maestro.types import (
+    BaselineCommandPayload,
     BaselineEntry,
     BaselineRegistry,
     CalibrationDisagreement,
+    CalibrationGateSummary,
     CalibrationReport,
+    CLIErrorPayload,
+    CLIResolvedConfig,
+    ConfigValidationPayload,
+    DecoupledEvidenceDiagnostic,
     ExpectedContextItem,
     HumanCalibrationSample,
     JudgeConfig,
@@ -36,6 +51,8 @@ from evalforge_maestro.types import (
     QualityGatePolicy,
     QualityGateResult,
     RAGExtractorConfig,
+    ReportDiagnosticsSummary,
+    ReportDocument,
     RunComparisonReport,
     TrendReport,
 )
@@ -59,10 +76,14 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "AnswerRelevanceMetric",
         "AsyncBatchMetric",
         "BaseJudgeMetric",
+        "BaselineCommandPayload",
         "BaselineEntry",
         "BaselineRegistry",
+        "CLIErrorPayload",
+        "CLIResolvedConfig",
         "CalibrationDisagreement",
         "CalibrationDisagreementType",
+        "CalibrationGateSummary",
         "CalibrationReport",
         "CallableAdapter",
         "CaseComparison",
@@ -72,12 +93,16 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "CaseMetricDelta",
         "CaseSplit",
         "ComparisonDirection",
+        "ConfigSettingProvenance",
+        "ConfigSourceTier",
+        "ConfigValidationPayload",
         "ConfigurationError",
         "ContextRelevanceMetric",
         "CustomRubricJudgeMetric",
         "DatasetEngine",
         "DatasetError",
         "DatasetStreamResult",
+        "DecoupledEvidenceDiagnostic",
         "DocpipeAdapter",
         "DriftCategory",
         "DriftWarning",
@@ -86,6 +111,7 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "EvalforgeError",
         "EvaluationCase",
         "EvaluationOrchestrator",
+        "EvidenceDecouplingCategory",
         "ExactMatchMetric",
         "ExecutionError",
         "ExecutionResult",
@@ -109,6 +135,7 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "MetricError",
         "MetricMetadata",
         "MetricResult",
+        "MetricSpecConfig",
         "MetricStatus",
         "MetricTrendSummary",
         "MissingExtraError",
@@ -122,6 +149,14 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "RAGAdapter",
         "RAGExtractorConfig",
         "RecallAtKMetric",
+        "ReplayAdapter",
+        "ReportDiagnosticsSummary",
+        "ReportDocument",
+        "ReportKind",
+        "ResolvedJudgeSettings",
+        "ResolvedLoggingConfig",
+        "ResolvedSecurityConfig",
+        "ResolvedTargetConfig",
         "RetrievedChunk",
         "RunComparisonReport",
         "RunManifestEntry",
@@ -129,6 +164,7 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "StorageError",
         "TargetAdapter",
         "TargetChangeSummary",
+        "TargetType",
         "TokenUsage",
         "TrendDataPoint",
         "TrendDirection",
@@ -138,12 +174,18 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "analyze_trend",
         "answer_correctness",
         "answer_relevance",
+        "build_calibration_report",
+        "build_comparison_report",
+        "build_run_report",
+        "build_trend_report",
         "calibrate_judge",
         "compare_runs",
         "context_relevance",
         "custom_rubric_judge",
         "detect_anomalies",
+        "detect_decoupled_evidence",
         "detect_drift",
+        "detect_pii_categories",
         "exact_match",
         "groundedness",
         "hit_rate_at_k",
@@ -154,6 +196,9 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "normalized_match",
         "precision_at_k",
         "recall_at_k",
+        "render_markdown",
+        "render_report_json",
+        "validate_pii_egress",
     }
     assert set(evalforge_maestro.__all__) == expected_top_all
     assert set(judges.__all__) == {
@@ -179,7 +224,21 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "detect_drift",
     }
     assert set(datasets.__all__) == {"DatasetEngine", "DatasetStreamResult", "load_docpipe_fixture"}
-    assert set(adapters.__all__) == {"CallableAdapter", "DocpipeAdapter", "RAGAdapter"}
+    assert set(adapters.__all__) == {
+        "CallableAdapter",
+        "DocpipeAdapter",
+        "RAGAdapter",
+        "ReplayAdapter",
+    }
+    assert set(reporting.__all__) == {
+        "build_calibration_report",
+        "build_comparison_report",
+        "build_run_report",
+        "build_trend_report",
+        "detect_decoupled_evidence",
+        "render_markdown",
+        "render_report_json",
+    }
     assert set(metrics.__all__) == {
         "ExactMatchMetric",
         "HitRateAtKMetric",
@@ -569,4 +628,138 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         "mean_score_delta",
         "disagreements",
         "recommended_pass_threshold",
+    }
+    assert _param_spec(evalforge_maestro.detect_pii_categories) == [
+        ("value", "POSITIONAL_OR_KEYWORD"),
+    ]
+    assert _param_spec(evalforge_maestro.validate_pii_egress) == [
+        ("value", "POSITIONAL_OR_KEYWORD"),
+        ("enabled", "KEYWORD_ONLY"),
+        ("context_label", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(adapters.ReplayAdapter.__init__) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("executions", "POSITIONAL_OR_KEYWORD"),
+        ("system_version", "KEYWORD_ONLY"),
+        ("model_id", "KEYWORD_ONLY"),
+        ("config_fingerprint", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(adapters.ReplayAdapter.from_file) == [
+        ("path", "POSITIONAL_OR_KEYWORD"),
+        ("system_version", "KEYWORD_ONLY"),
+        ("model_id", "KEYWORD_ONLY"),
+        ("config_fingerprint", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(reporting.detect_decoupled_evidence) == [
+        ("run", "POSITIONAL_OR_KEYWORD"),
+    ]
+    assert _param_spec(reporting.build_run_report) == [
+        ("run", "POSITIONAL_OR_KEYWORD"),
+        ("comparison", "KEYWORD_ONLY"),
+        ("trend", "KEYWORD_ONLY"),
+        ("gate", "KEYWORD_ONLY"),
+        ("title", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(reporting.build_comparison_report) == [
+        ("comparison", "POSITIONAL_OR_KEYWORD"),
+        ("candidate_run", "KEYWORD_ONLY"),
+        ("gate", "KEYWORD_ONLY"),
+        ("title", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(reporting.build_trend_report) == [
+        ("trend", "POSITIONAL_OR_KEYWORD"),
+        ("gate", "KEYWORD_ONLY"),
+        ("title", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(reporting.build_calibration_report) == [
+        ("calibration", "POSITIONAL_OR_KEYWORD"),
+        ("min_agreement", "KEYWORD_ONLY"),
+        ("strict", "KEYWORD_ONLY"),
+        ("title", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(reporting.render_report_json) == [
+        ("document", "POSITIONAL_OR_KEYWORD"),
+        ("pretty", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(reporting.render_markdown) == [
+        ("document", "POSITIONAL_OR_KEYWORD"),
+    ]
+    assert set(CLIResolvedConfig.model_fields) >= {
+        "schema_version",
+        "config_path",
+        "env_file_path",
+        "storage_dir",
+        "dataset",
+        "dataset_id",
+        "dataset_version",
+        "executions_path",
+        "run_id",
+        "baseline",
+        "trend_window",
+        "strict",
+        "target",
+        "metrics",
+        "execution",
+        "judge",
+        "security",
+        "gate",
+        "logging",
+        "provenance",
+    }
+    assert set(DecoupledEvidenceDiagnostic.model_fields) >= {
+        "case_id",
+        "mandatory",
+        "category",
+        "passed_metrics",
+        "failed_metrics",
+        "retrieved_chunk_ids",
+        "explanation",
+    }
+    assert set(ReportDiagnosticsSummary.model_fields) >= {
+        "mandatory_failed_case_ids",
+        "decoupled_evidence_cases",
+        "anomaly_highlights",
+        "drift_highlights",
+    }
+    assert set(CalibrationGateSummary.model_fields) >= {
+        "min_agreement",
+        "observed_agreement",
+        "strict",
+        "valid_cases",
+        "inconclusive_cases",
+        "passed",
+        "reason",
+    }
+    assert set(ReportDocument.model_fields) >= {
+        "schema_version",
+        "report_kind",
+        "title",
+        "generated_at",
+        "evaluation",
+        "comparison",
+        "trend",
+        "calibration",
+        "gate",
+        "calibration_gate",
+        "diagnostics",
+    }
+    assert set(BaselineCommandPayload.model_fields) >= {
+        "schema_version",
+        "action",
+        "entry",
+        "baselines",
+    }
+    assert set(ConfigValidationPayload.model_fields) >= {
+        "schema_version",
+        "valid",
+        "config_path",
+        "env_file_path",
+        "warnings",
+    }
+    assert set(CLIErrorPayload.model_fields) >= {
+        "schema_version",
+        "exit_code",
+        "error_type",
+        "message",
+        "hint",
     }

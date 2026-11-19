@@ -36,6 +36,7 @@ _HEAVY_OPTIONAL_MODULES = (
     "scipy",
     "jsonschema",
     "tomllib",
+    "tomli",
     "dotenv",
 )
 
@@ -72,6 +73,42 @@ def test_library_ast_import_and_logging_boundaries() -> None:
         imports = _iter_imported_modules(py_file)
         calls = _iter_call_names(py_file)
 
+        # CLI layer is the explicit configuration/boundary entrypoint
+        if rel.startswith("cli/"):
+            for mod in imports:
+                assert mod not in {"dotenv", "python_dotenv"}, (
+                    f"CLI module {rel} must not depend on external dotenv ({mod!r})"
+                )
+            if rel in {"cli/__init__.py", "cli/parser.py", "cli/logging_utils.py"}:
+                for mod in imports:
+                    assert mod not in {
+                        "tomllib",
+                        "tomli",
+                        "litellm",
+                        "docpipe_maestro",
+                    }, f"Cold-start CLI module {rel} must not import {mod!r}"
+                module_ast = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+                for top_node in module_ast.body:
+                    top_names: list[str] = []
+                    if isinstance(top_node, ast.Import):
+                        top_names.extend(alias.name for alias in top_node.names)
+                    elif isinstance(top_node, ast.ImportFrom) and top_node.module:
+                        top_names.append(top_node.module)
+                    for top_mod in top_names:
+                        for forbidden_cold in (
+                            "evalforge_maestro.cli.commands",
+                            "evalforge_maestro.cli.targets",
+                            "evalforge_maestro.cli.config",
+                        ):
+                            assert not top_mod.startswith(forbidden_cold), (
+                                f"Cold-start CLI module {rel} must keep {top_mod!r} lazy"
+                            )
+            assert "print" not in calls, f"CLI module {rel} must not call print()"
+            assert "basicConfig" not in calls, f"CLI module {rel} must not call basicConfig()"
+            assert "StreamHandler" not in calls, f"CLI module {rel} must not attach StreamHandler"
+            assert "FileHandler" not in calls, f"CLI module {rel} must not attach FileHandler"
+            continue
+
         # Zero CLI, tomllib, or dotenv imports anywhere in library code
         for mod in imports:
             assert mod not in _FORBIDDEN_CONFIG_AND_CLI_MODULES, f"{rel} must not import {mod!r}"
@@ -86,6 +123,22 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                     "evalforge_maestro.adapters"
                 ), f"Library module {rel} must not import target adapters ({mod!r})"
 
+        # Reporting subsystem imports only types, _canonical, exceptions, and stdlib
+        if rel.startswith("reporting/"):
+            for mod in imports:
+                for forbidden_sub in (
+                    "adapters",
+                    "datasets",
+                    "execution",
+                    "metrics",
+                    "judges",
+                    "regression",
+                    "storage",
+                ):
+                    assert not mod.startswith(f"evalforge_maestro.{forbidden_sub}"), (
+                        f"Reporting module {rel} must not import {mod!r}"
+                    )
+
         # Leaf modules types.py, exceptions.py, _canonical.py must not import domain subpackages
         if rel in {"types.py", "exceptions.py", "_canonical.py"}:
             for mod in imports:
@@ -97,6 +150,7 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                     "execution",
                     "storage",
                     "regression",
+                    "reporting",
                 ):
                     assert not mod.startswith(f"evalforge_maestro.{sub}"), (
                         f"Leaf module {rel} must not import {mod!r}"
@@ -105,7 +159,7 @@ def test_library_ast_import_and_logging_boundaries() -> None:
         # Pure computational modules (regression/, metrics/) never import I/O/adapters/judges
         if rel.startswith(("regression/", "metrics/")):
             for mod in imports:
-                for forbidden_sub in ("adapters", "execution", "storage", "judges"):
+                for forbidden_sub in ("adapters", "execution", "storage", "judges", "reporting"):
                     assert not mod.startswith(f"evalforge_maestro.{forbidden_sub}"), (
                         f"Pure module {rel} must not import {mod!r}"
                     )
@@ -120,6 +174,7 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                     "storage",
                     "metrics",
                     "regression",
+                    "reporting",
                 ):
                     assert not mod.startswith(f"evalforge_maestro.{forbidden_sub}"), (
                         f"Judge module {rel} must not import {mod!r}"
@@ -205,3 +260,27 @@ def test_cold_start_import_loads_no_heavy_optional_dependencies() -> None:
         text=True,
     )
     assert proc_mock.returncode == 0, proc_mock.stderr or proc_mock.stdout
+
+    # CLI `--help` cold start (root and subcommand) must also leave heavy/config modules unloaded
+    for help_argv in (
+        ["evalforge-maestro", "--help"],
+        ["evalforge_maestro", "--help"],
+        ["evalforge-maestro", "run", "--help"],
+    ):
+        cli_probe = (
+            "import sys; "
+            "from evalforge_maestro.cli import main; "
+            f"code = main({help_argv[1:]!r}); "
+            "assert code == 0; "
+            f"forbidden = {list(_HEAVY_OPTIONAL_MODULES)!r}; "
+            "loaded = [m for m in forbidden if any(k == m or k.startswith(m + '.') "
+            "for k in sys.modules)]; "
+            "assert not loaded, f'Unexpected CLI --help cold-start imports: {loaded}'"
+        )
+        proc_cli = subprocess.run(
+            [sys.executable, "-c", cli_probe],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert proc_cli.returncode == 0, proc_cli.stderr or proc_cli.stdout

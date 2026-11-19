@@ -6,12 +6,23 @@ import ipaddress
 import os
 import re
 import secrets
+from collections.abc import Sequence
 from typing import Any
 from urllib.parse import urlparse
 
-from evalforge_maestro._canonical import canonical_json_str, scrub_secret_text
+from evalforge_maestro._canonical import (
+    canonical_json_str,
+    detect_pii_categories,
+    scrub_secret_text,
+)
 from evalforge_maestro.exceptions import LocalOnlyPolicyError
-from evalforge_maestro.types import JudgeConfig
+from evalforge_maestro.types import (
+    EvaluationCase,
+    ExecutionResult,
+    JudgeConfig,
+    MetricMetadata,
+    MetricResult,
+)
 
 _VALID_TAG_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _OLLAMA_PREFIXES = ("ollama/", "ollama_chat/")
@@ -101,3 +112,115 @@ def ensure_airgap_cost_map(*, local_only: bool) -> None:
         os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     else:
         os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
+
+def is_remote_judge_endpoint(config: JudgeConfig) -> bool:
+    """Return True iff non-mock judge calls target a non-loopback remote endpoint."""
+    if config.mock_mode:
+        return False
+    model_lower = config.model.lower()
+    if config.api_base is not None:
+        target_url = config.api_base
+    elif model_lower.startswith(_OLLAMA_PREFIXES):
+        target_url = os.environ.get("OLLAMA_API_BASE", "").strip() or "http://localhost:11434"
+    else:
+        return True
+
+    parsed = urlparse(target_url)
+    host = parsed.hostname
+    return not host or not is_loopback_host(host)
+
+
+def validate_pii_egress(
+    value: Any,
+    *,
+    enabled: bool = True,
+    context_label: str = "outbound payload",
+) -> None:
+    """Block sensitive PII or credential egress before transmission without logging raw values."""
+    if not enabled:
+        return
+    categories = detect_pii_categories(value)
+    if categories:
+        raise LocalOnlyPolicyError(
+            f"Outbound PII/credential egress blocked on {context_label} "
+            f"(detected categories: {', '.join(categories)}; raw matched text omitted)."
+        )
+
+
+def _case_judge_payload(case: EvaluationCase, execution: ExecutionResult) -> dict[str, Any]:
+    return {
+        "input": case.input,
+        "output": execution.output,
+        "reference": case.reference,
+        "retrieved_chunks": [chunk.text for chunk in execution.retrieved_chunks],
+    }
+
+
+class _PIIGuardedJudgeMetric:
+    """Delegating judge metric wrapper enforcing pre-network PII screening on remote judges."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    @property
+    def metadata(self) -> MetricMetadata:
+        return self._inner.metadata  # type: ignore[no-any-return]
+
+    @property
+    def judge_config(self) -> JudgeConfig:
+        return self._inner.judge_config  # type: ignore[no-any-return]
+
+    @property
+    def judge_config_fingerprint(self) -> str | None:
+        return self._inner.judge_config_fingerprint  # type: ignore[no-any-return]
+
+    def evaluate(
+        self,
+        case: EvaluationCase,
+        execution: ExecutionResult,
+    ) -> MetricResult:
+        validate_pii_egress(
+            _case_judge_payload(case, execution),
+            enabled=True,
+            context_label=f"judge {self.metadata.metric_id!r} case {case.id!r}",
+        )
+        return self._inner.evaluate(case, execution)  # type: ignore[no-any-return]
+
+    async def aevaluate(
+        self,
+        case: EvaluationCase,
+        execution: ExecutionResult,
+    ) -> MetricResult:
+        validate_pii_egress(
+            _case_judge_payload(case, execution),
+            enabled=True,
+            context_label=f"judge {self.metadata.metric_id!r} case {case.id!r}",
+        )
+        return await self._inner.aevaluate(case, execution)  # type: ignore[no-any-return]
+
+    async def aevaluate_batch(
+        self,
+        items: Sequence[tuple[EvaluationCase, ExecutionResult]],
+        *,
+        max_concurrency: int = 4,
+    ) -> list[MetricResult]:
+        for case, execution in items:
+            validate_pii_egress(
+                _case_judge_payload(case, execution),
+                enabled=True,
+                context_label=f"judge {self.metadata.metric_id!r} case {case.id!r}",
+            )
+        return await self._inner.aevaluate_batch(items, max_concurrency=max_concurrency)  # type: ignore[no-any-return]
+
+
+def wrap_pii_guarded_metric(metric: Any, *, block_pii: bool) -> Any:
+    """Wrap remote non-mock judge metrics with pre-network PII screening when block_pii=True."""
+    if not block_pii:
+        return metric
+    judge_cfg = getattr(metric, "judge_config", None)
+    if not isinstance(judge_cfg, JudgeConfig):
+        return metric
+    if not is_remote_judge_endpoint(judge_cfg):
+        return metric
+    return _PIIGuardedJudgeMetric(metric)

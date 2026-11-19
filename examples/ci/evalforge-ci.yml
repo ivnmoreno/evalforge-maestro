@@ -1,0 +1,58 @@
+name: EvalForge Maestro PR Quality Gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evalforge-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install EvalForge Maestro
+        run: python -m pip install --upgrade pip && pip install "evalforge-maestro>=0.1"
+
+      - name: Validate EvalForge configuration
+        run: evalforge-maestro config validate --config examples/ci/evalforge.toml --json
+
+      - name: Run offline evaluation quality gate (--mock --local-only)
+        id: evalforge_run
+        run: |
+          evalforge-maestro run \
+            --config examples/ci/evalforge.toml \
+            --dataset examples/ci/golden-sample.jsonl \
+            --executions examples/ci/executions-sample.jsonl \
+            --mock \
+            --local-only \
+            --strict \
+            --json \
+            --json-out evalforge-report.json \
+            --markdown-out evalforge-report.md \
+            > evalforge-stdout.json
+
+      - name: Publish Markdown report to GitHub Job Summary
+        if: always()
+        run: |
+          if [ -f evalforge-report.md ]; then
+            cat evalforge-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evalforge-reports
+          path: |
+            evalforge-report.json
+            evalforge-report.md
+          if-no-files-found: ignore

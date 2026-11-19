@@ -1,0 +1,321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvalForge Maestro M5 CLI, Config & Reporting Schema Extensions (v1.0)",
+  "$comment": "Milestone 5 $defs for CLIResolvedConfig, ReportDocument, BaselineCommandPayload, ConfigValidationPayload, CLIErrorPayload, and supporting submodels.",
+  "$defs": {
+    "ConfigSourceTier": {
+      "type": "string",
+      "enum": ["cli", "env", "env_file", "file", "default"]
+    },
+    "TargetType": {
+      "type": "string",
+      "enum": ["callable", "rag", "docpipe", "replay"]
+    },
+    "ReportKind": {
+      "type": "string",
+      "enum": ["run", "compare", "trend", "calibrate"]
+    },
+    "EvidenceDecouplingCategory": {
+      "type": "string",
+      "enum": [
+        "answer_passed_retrieval_or_grounding_failed",
+        "retrieval_passed_answer_or_grounding_failed"
+      ]
+    },
+    "MetricSpecConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric_id"],
+      "properties": {
+        "metric_id": { "type": "string", "minLength": 1 },
+        "params": { "type": "object", "default": {} }
+      }
+    },
+    "ResolvedSecurityConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "local_only": { "type": "boolean", "default": false },
+        "block_pii": { "type": "boolean", "default": false }
+      }
+    },
+    "ResolvedTargetConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target_type": {
+          "anyOf": [{ "$ref": "#/$defs/TargetType" }, { "type": "null" }],
+          "default": null
+        },
+        "entrypoint": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "system_version": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "model_id": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "arg_mode": { "type": "string", "enum": ["input", "case"], "default": "input" },
+        "rag_extractors": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 },
+          "default": {}
+        },
+        "docpipe_mode": {
+          "type": "string",
+          "enum": ["answer_detailed", "retrieve"],
+          "default": "answer_detailed"
+        },
+        "docpipe_collection": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "docpipe_top_k": { "type": ["integer", "null"], "minimum": 1, "default": null }
+      }
+    },
+    "ResolvedJudgeSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string", "minLength": 1, "default": "mock-judge" },
+        "api_base": {
+          "anyOf": [
+            { "type": "string", "pattern": "^https?://[^\\s@?#]+$" },
+            { "type": "null" }
+          ],
+          "default": null
+        },
+        "api_key": {
+          "anyOf": [
+            { "type": "string", "const": "[REDACTED]" },
+            { "type": "null" }
+          ],
+          "default": null
+        },
+        "temperature": { "type": "number", "minimum": 0.0, "maximum": 2.0, "default": 0.0 },
+        "pass_threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 },
+        "max_retries": { "type": "integer", "minimum": 0, "maximum": 10, "default": 2 },
+        "retry_backoff_seconds": { "type": "number", "minimum": 0.0, "maximum": 60.0, "default": 0.5 },
+        "timeout_seconds": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 600.0, "default": 30.0 },
+        "prompt_version": { "type": "string", "minLength": 1, "default": "1.0" },
+        "mock_mode": { "type": "boolean", "default": false },
+        "local_only": { "type": "boolean", "default": false },
+        "seed": { "type": ["integer", "null"], "default": null },
+        "min_agreement": { "type": ["number", "null"], "minimum": 0.0, "maximum": 100.0, "default": null }
+      }
+    },
+    "ResolvedLoggingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "log_level": {
+          "type": "string",
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR"],
+          "default": "WARNING"
+        },
+        "log_json": { "type": "boolean", "default": false }
+      }
+    },
+    "OrchestratorConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_concurrency": { "type": "integer", "minimum": 1, "default": 4 },
+        "max_dataset_cases": { "type": ["integer", "null"], "minimum": 1, "default": null },
+        "max_context_chars": { "type": ["integer", "null"], "minimum": 1, "default": null },
+        "case_timeout_seconds": { "type": ["number", "null"], "exclusiveMinimum": 0.0, "default": null },
+        "max_memory_mb": { "type": ["number", "null"], "exclusiveMinimum": 0.0, "default": null },
+        "memory_limit_action": { "type": "string", "enum": ["warn", "abort"], "default": "warn" },
+        "fail_fast": { "type": "boolean", "default": false },
+        "retain_checkpoints": { "type": "boolean", "default": false },
+        "seed": { "type": ["integer", "null"], "default": null },
+        "judge_config_fingerprint": { "type": ["string", "null"], "minLength": 1, "default": null }
+      }
+    },
+    "ConfigSettingProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value", "source"],
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "value": {},
+        "source": { "$ref": "#/$defs/ConfigSourceTier" },
+        "masked": { "type": "boolean", "default": false }
+      }
+    },
+    "CLIResolvedConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "config_path": { "type": ["string", "null"], "default": null },
+        "env_file_path": { "type": ["string", "null"], "default": null },
+        "storage_dir": { "type": "string", "minLength": 1, "default": ".evalforge" },
+        "dataset": { "type": ["string", "null"], "default": null },
+        "dataset_id": { "type": ["string", "null"], "default": null },
+        "dataset_version": { "type": ["string", "null"], "default": null },
+        "executions_path": { "type": ["string", "null"], "default": null },
+        "run_id": { "type": ["string", "null"], "default": null },
+        "baseline": { "type": ["string", "null"], "default": null },
+        "trend_window": { "type": ["integer", "null"], "minimum": 2, "default": null },
+        "strict": { "type": "boolean", "default": false },
+        "target": { "$ref": "#/$defs/ResolvedTargetConfig" },
+        "metrics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MetricSpecConfig" },
+          "default": []
+        },
+        "execution": { "$ref": "#/$defs/OrchestratorConfig" },
+        "judge": { "$ref": "#/$defs/ResolvedJudgeSettings" },
+        "security": { "$ref": "#/$defs/ResolvedSecurityConfig" },
+        "gate": { "$ref": "#/$defs/QualityGatePolicy" },
+        "logging": { "$ref": "#/$defs/ResolvedLoggingConfig" },
+        "provenance": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConfigSettingProvenance" },
+          "default": []
+        }
+      }
+    },
+    "DecoupledEvidenceDiagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "category", "passed_metrics", "failed_metrics", "explanation"],
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1 },
+        "mandatory": { "type": "boolean", "default": false },
+        "category": { "$ref": "#/$defs/EvidenceDecouplingCategory" },
+        "passed_metrics": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "failed_metrics": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "retrieved_chunk_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "explanation": { "type": "string", "minLength": 1 }
+      }
+    },
+    "ReportDiagnosticsSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mandatory_failed_case_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "decoupled_evidence_cases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DecoupledEvidenceDiagnostic" },
+          "default": []
+        },
+        "anomaly_highlights": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AnomalyFlag" },
+          "default": []
+        },
+        "drift_highlights": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DriftWarning" },
+          "default": []
+        }
+      }
+    },
+    "CalibrationGateSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "valid_cases", "inconclusive_cases", "reason"],
+      "properties": {
+        "min_agreement": { "type": ["number", "null"], "minimum": 0.0, "maximum": 100.0, "default": null },
+        "observed_agreement": { "type": ["number", "null"], "minimum": 0.0, "maximum": 100.0, "default": null },
+        "strict": { "type": "boolean", "default": false },
+        "valid_cases": { "type": "integer", "minimum": 0 },
+        "inconclusive_cases": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "boolean" },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "ReportDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["report_kind", "title", "generated_at"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "report_kind": { "$ref": "#/$defs/ReportKind" },
+        "title": { "type": "string", "minLength": 1 },
+        "generated_at": { "type": "string", "format": "date-time" },
+        "evaluation": {
+          "anyOf": [{ "$ref": "#/$defs/RunRecord" }, { "type": "null" }],
+          "default": null
+        },
+        "comparison": {
+          "anyOf": [{ "$ref": "#/$defs/RunComparisonReport" }, { "type": "null" }],
+          "default": null
+        },
+        "trend": {
+          "anyOf": [{ "$ref": "#/$defs/TrendReport" }, { "type": "null" }],
+          "default": null
+        },
+        "calibration": {
+          "anyOf": [{ "$ref": "#/$defs/CalibrationReport" }, { "type": "null" }],
+          "default": null
+        },
+        "gate": {
+          "anyOf": [{ "$ref": "#/$defs/QualityGateResult" }, { "type": "null" }],
+          "default": null
+        },
+        "calibration_gate": {
+          "anyOf": [{ "$ref": "#/$defs/CalibrationGateSummary" }, { "type": "null" }],
+          "default": null
+        },
+        "diagnostics": { "$ref": "#/$defs/ReportDiagnosticsSummary" }
+      }
+    },
+    "BaselineCommandPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "action": { "type": "string", "enum": ["set", "list", "show", "delete"] },
+        "entry": {
+          "anyOf": [{ "$ref": "#/$defs/BaselineEntry" }, { "type": "null" }],
+          "default": null
+        },
+        "baselines": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/BaselineEntry" },
+          "default": []
+        }
+      }
+    },
+    "ConfigValidationPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["valid"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "valid": { "type": "boolean" },
+        "config_path": { "type": ["string", "null"], "default": null },
+        "env_file_path": { "type": ["string", "null"], "default": null },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        }
+      }
+    },
+    "CLIErrorPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exit_code", "error_type", "message"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "exit_code": { "type": "integer", "enum": [2, 3, 4] },
+        "error_type": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "hint": { "type": ["string", "null"], "default": null }
+      }
+    }
+  }
+}

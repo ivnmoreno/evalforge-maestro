@@ -55,6 +55,13 @@ _KV_SECRET_RE = re.compile(
     r"(?i)\b(api[_-]?key|apikey|token|secret|password|passwd|passphrase|access[_-]?key|secret[_-]?key|client[_-]?secret|authorization)\b(\s*[=:]\s*)([^\s&'\",;]+)"
 )
 _URL_USERINFO_RE = re.compile(r"(https?://)([^:@/\s]+):([^@/\s]+)@")
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_US_SSN_RE = re.compile(r"\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b")
+_PHONE_RE = re.compile(
+    r"(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\b\d{3}[\s.-])\s*\d{3}[\s.-]\d{4}\b|"
+    r"\+[1-9]\d{0,2}[\s.-](?:\d[\s.-]?){7,12}\d\b"
+)
+_PAYMENT_CARD_RE = re.compile(r"\b\d(?:[ -]?\d){12,18}\b")
 
 
 def round_score(value: float) -> float:
@@ -146,7 +153,8 @@ class StreamingCanonicalHasher:
         return self._hasher.hexdigest()
 
 
-def _is_sensitive_key(key: str) -> bool:
+def is_sensitive_key(key: str) -> bool:
+    """Return True if mapping/config key name denotes a credential or secret."""
     normalized = _KEY_NORMALIZE_RE.sub("_", key.strip().lower())
     if normalized in _EXACT_SECRET_KEYS:
         return True
@@ -155,13 +163,78 @@ def _is_sensitive_key(key: str) -> bool:
     return "api_key" in normalized or "apikey" in normalized or "client_secret" in normalized
 
 
+def _is_luhn_valid(digits: str) -> bool:
+    if not (13 <= len(digits) <= 19) or not digits.isdigit():
+        return False
+    if len(set(digits)) == 1:
+        return False
+    total = 0
+    for idx, ch in enumerate(reversed(digits)):
+        num = int(ch)
+        if idx % 2 == 1:
+            num *= 2
+            if num > 9:
+                num -= 9
+        total += num
+    return total % 10 == 0
+
+
+def _collect_pii_categories(value: Any, categories: set[str]) -> None:
+    if value is None or isinstance(value, (bool, int, float)):
+        return
+    if hasattr(value, "model_dump") and callable(value.model_dump):
+        value = value.model_dump(mode="json")
+    if isinstance(value, Mapping):
+        for raw_key, raw_val in value.items():
+            key_str = str(raw_key)
+            if (
+                is_sensitive_key(key_str)
+                and isinstance(raw_val, str)
+                and raw_val.strip()
+                and raw_val.strip() != REDACTED_VALUE
+            ):
+                categories.add("secret_token")
+            _collect_pii_categories(raw_val, categories)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            _collect_pii_categories(item, categories)
+        return
+    text = str(value)
+    if _EMAIL_RE.search(text):
+        categories.add("email_address")
+    if _US_SSN_RE.search(text):
+        categories.add("us_ssn")
+    if _PHONE_RE.search(text):
+        categories.add("phone_number")
+    for match in _PAYMENT_CARD_RE.finditer(text):
+        digits = re.sub(r"\D", "", match.group(0))
+        if _is_luhn_valid(digits):
+            categories.add("payment_card")
+            break
+    if (
+        _PROVIDER_TOKEN_RE.search(text)
+        or _BEARER_TOKEN_RE.search(text)
+        or _URL_USERINFO_RE.search(text)
+        or _KV_SECRET_RE.search(text)
+    ):
+        categories.add("secret_token")
+
+
+def detect_pii_categories(value: Any) -> list[str]:
+    """Return sorted PII and secret category names found in value without returning raw matches."""
+    found: set[str] = set()
+    _collect_pii_categories(value, found)
+    return sorted(found)
+
+
 def redact_secrets(value: Any) -> Any:
     """Recursively mask sensitive credential keys inside mappings and sequences."""
     if isinstance(value, Mapping):
         sanitized: dict[str, Any] = {}
         for raw_key, raw_val in value.items():
             key_str = str(raw_key)
-            if _is_sensitive_key(key_str):
+            if is_sensitive_key(key_str):
                 sanitized[key_str] = REDACTED_VALUE
             else:
                 sanitized[key_str] = redact_secrets(raw_val)

@@ -1,0 +1,33 @@
+[run]
+dataset = "examples/ci/golden-sample.jsonl"
+executions = "examples/ci/executions-sample.jsonl"
+max_concurrency = 4
+strict = true
+
+[metrics]
+enabled = ["normalized_match", "precision_at_k", "recall_at_k", "groundedness"]
+
+[metrics.precision_at_k]
+k = 1
+threshold = 0.5
+
+[metrics.recall_at_k]
+k = 1
+threshold = 0.5
+
+[judge]
+model = "mock-judge"
+mock_mode = true
+local_only = true
+pass_threshold = 0.5
+
+[security]
+local_only = true
+block_pii = false
+
+[gate]
+min_score = 0.75
+max_regression_drop = 0.05
+max_inconclusive_rate = 0.05
+fail_on_drift = false
+fail_on_anomaly = false

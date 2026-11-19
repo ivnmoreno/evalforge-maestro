@@ -33,7 +33,12 @@ classifiers = [
 dependencies = [
     "pydantic>=2.7,<3",
     "jsonschema>=4.23,<5",
+    "tomli>=2.0.1; python_version < '3.11'",
 ]
+
+[project.scripts]
+evalforge-maestro = "evalforge_maestro.cli:main"
+evalforge_maestro = "evalforge_maestro.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/ivnmoreno/evalforge-maestro"

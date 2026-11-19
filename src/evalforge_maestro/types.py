@@ -14,11 +14,14 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from evalforge_maestro._canonical import (
+    REDACTED_VALUE,
     canonical_sha256,
+    is_sensitive_key,
     redact_secrets,
     round_delta,
     round_percentage,
     round_score,
+    scrub_secret_text,
 )
 
 SCHEMA_VERSION: Literal["1.0"] = "1.0"
@@ -116,6 +119,41 @@ class CalibrationDisagreementType(str, Enum):
     INCONCLUSIVE = "inconclusive"
 
 
+class ConfigSourceTier(str, Enum):
+    """Precedence tier from which a resolved CLI configuration value originated."""
+
+    CLI = "cli"
+    ENV = "env"
+    ENV_FILE = "env_file"
+    FILE = "file"
+    DEFAULT = "default"
+
+
+class TargetType(str, Enum):
+    """Supported target adapter or offline trace-replay execution modes."""
+
+    CALLABLE = "callable"
+    RAG = "rag"
+    DOCPIPE = "docpipe"
+    REPLAY = "replay"
+
+
+class ReportKind(str, Enum):
+    """Top-level report workflows emitted by reporting and CLI subcommands."""
+
+    RUN = "run"
+    COMPARE = "compare"
+    TREND = "trend"
+    CALIBRATE = "calibrate"
+
+
+class EvidenceDecouplingCategory(str, Enum):
+    """Category identifying divergence between retrieval evidence and answer/grounding outcome."""
+
+    ANSWER_PASSED_RETRIEVAL_FAILED = "answer_passed_retrieval_or_grounding_failed"
+    RETRIEVAL_PASSED_ANSWER_FAILED = "retrieval_passed_answer_or_grounding_failed"
+
+
 def _ensure_json_serializable(value: _T, *, field_name: str) -> _T:
     try:
         json.dumps(value, allow_nan=False)
@@ -143,6 +181,22 @@ def _ensure_non_empty_str(value: str, *, field_name: str) -> str:
     if not stripped:
         raise ValueError(f"{field_name} must be a non-empty string")
     return stripped
+
+
+def _validate_http_api_base(value: str | None, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    cleaned = _ensure_non_empty_str(value, field_name=field_name)
+    if any(ch.isspace() for ch in cleaned):
+        raise ValueError(f"{field_name} must not contain whitespace")
+    if "?" in cleaned or "#" in cleaned or ";" in cleaned:
+        raise ValueError(f"{field_name} must not include query parameters or fragments")
+    parsed = urlparse(cleaned)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"{field_name} must be an http/https URL with valid hostname")
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+        raise ValueError(f"{field_name} must not include embedded URL credentials")
+    return cleaned
 
 
 def _validate_optional_str(value: str | None, *, field_name: str) -> str | None:
@@ -1361,19 +1415,7 @@ class JudgeConfig(_StrictModel):
     @field_validator("api_base")
     @classmethod
     def _validate_api_base(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        cleaned = _ensure_non_empty_str(value, field_name="JudgeConfig.api_base")
-        if any(ch.isspace() for ch in cleaned):
-            raise ValueError("JudgeConfig.api_base must not contain whitespace")
-        if "?" in cleaned or "#" in cleaned or ";" in cleaned:
-            raise ValueError("JudgeConfig.api_base must not include query parameters or fragments")
-        parsed = urlparse(cleaned)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("JudgeConfig.api_base must be an http/https URL with valid hostname")
-        if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
-            raise ValueError("JudgeConfig.api_base must not include embedded URL credentials")
-        return cleaned
+        return _validate_http_api_base(value, field_name="JudgeConfig.api_base")
 
     @field_validator("temperature", "retry_backoff_seconds", "timeout_seconds", mode="before")
     @classmethod
@@ -1681,3 +1723,408 @@ class AsyncBatchMetric(Protocol):
         max_concurrency: int = 4,
     ) -> list[MetricResult]:
         """Evaluate a sequence of case/execution pairs concurrently under max_concurrency."""
+
+
+class MetricSpecConfig(_StrictModel):
+    """Declarative single metric identifier and optional parameter snapshot."""
+
+    metric_id: str = Field(min_length=1)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metric_id")
+    @classmethod
+    def _validate_metric_id(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="MetricSpecConfig.metric_id")
+
+    @field_validator("params")
+    @classmethod
+    def _validate_params(cls, value: dict[str, Any]) -> dict[str, Any]:
+        checked = _ensure_json_serializable(value, field_name="MetricSpecConfig.params")
+        sanitized = redact_secrets(checked)
+        if not isinstance(sanitized, dict):  # pragma: no cover - defensive guard
+            raise ValueError("MetricSpecConfig.params must be a JSON object")
+        return sanitized
+
+
+class ResolvedSecurityConfig(_StrictModel):
+    """Resolved locality and pre-network PII egress blocking policy."""
+
+    local_only: bool = False
+    block_pii: bool = False
+
+
+class ResolvedTargetConfig(_StrictModel):
+    """Resolved CLI target adapter or offline replay binding configuration."""
+
+    target_type: TargetType | None = None
+    entrypoint: str | None = None
+    system_version: str | None = None
+    model_id: str | None = None
+    arg_mode: Literal["input", "case"] = "input"
+    rag_extractors: dict[str, str] = Field(default_factory=dict)
+    docpipe_mode: Literal["answer_detailed", "retrieve"] = "answer_detailed"
+    docpipe_collection: str | None = None
+    docpipe_top_k: int | None = Field(default=None, ge=1)
+
+    @field_validator("entrypoint", "system_version", "model_id", "docpipe_collection")
+    @classmethod
+    def _validate_opt_strings(cls, value: str | None, info: ValidationInfo) -> str | None:
+        cleaned = _validate_optional_str(
+            value, field_name=f"ResolvedTargetConfig.{info.field_name}"
+        )
+        return scrub_secret_text(cleaned) if cleaned is not None else None
+
+    @field_validator("rag_extractors")
+    @classmethod
+    def _validate_extractors(cls, value: dict[str, str]) -> dict[str, str]:
+        return {
+            _ensure_non_empty_str(k, field_name="ResolvedTargetConfig.rag_extractors"): (
+                _ensure_non_empty_str(v, field_name="ResolvedTargetConfig.rag_extractors")
+            )
+            for k, v in value.items()
+        }
+
+    @field_validator("docpipe_top_k", mode="before")
+    @classmethod
+    def _validate_top_k(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name="ResolvedTargetConfig.docpipe_top_k")
+
+
+class ResolvedJudgeSettings(_StrictModel):
+    """Redacted judge runtime and calibration settings resolved across CLI config tiers."""
+
+    model: str = Field(default="mock-judge", min_length=1)
+    api_base: str | None = None
+    api_key: str | None = None
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    pass_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    max_retries: int = Field(default=2, ge=0, le=10)
+    retry_backoff_seconds: float = Field(default=0.5, ge=0.0, le=60.0)
+    timeout_seconds: float = Field(default=30.0, gt=0.0, le=600.0)
+    prompt_version: str = Field(default="1.0", min_length=1)
+    mock_mode: bool = False
+    local_only: bool = False
+    seed: int | None = None
+    min_agreement: float | None = Field(default=None, ge=0.0, le=100.0)
+
+    @field_validator("model", "prompt_version")
+    @classmethod
+    def _validate_non_empty(cls, value: str, info: ValidationInfo) -> str:
+        return _ensure_non_empty_str(value, field_name=f"ResolvedJudgeSettings.{info.field_name}")
+
+    @field_validator("api_base")
+    @classmethod
+    def _validate_api_base(cls, value: str | None) -> str | None:
+        return _validate_http_api_base(value, field_name="ResolvedJudgeSettings.api_base")
+
+    @field_validator("api_key")
+    @classmethod
+    def _mask_api_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            return None
+        return REDACTED_VALUE
+
+    @field_validator("temperature", "retry_backoff_seconds", "timeout_seconds", mode="before")
+    @classmethod
+    def _validate_float_params(cls, value: Any, info: ValidationInfo) -> Any:
+        _reject_bool_number(value, field_name=f"ResolvedJudgeSettings.{info.field_name}")
+        return value
+
+    @field_validator("pass_threshold", mode="before")
+    @classmethod
+    def _validate_pass_threshold(cls, value: Any) -> Any:
+        _reject_bool_number(value, field_name="ResolvedJudgeSettings.pass_threshold")
+        return round_score(float(value))
+
+    @field_validator("min_agreement", mode="before")
+    @classmethod
+    def _validate_min_agreement(cls, value: Any) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name="ResolvedJudgeSettings.min_agreement")
+        return round_percentage(float(value))
+
+    @field_validator("max_retries", "seed", mode="before")
+    @classmethod
+    def _validate_ints(cls, value: Any, info: ValidationInfo) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name=f"ResolvedJudgeSettings.{info.field_name}")
+
+
+class ResolvedLoggingConfig(_StrictModel):
+    """Resolved CLI stderr diagnostic verbosity and structured logging mode."""
+
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "WARNING"
+    log_json: bool = False
+
+
+class ConfigSettingProvenance(_StrictModel):
+    """Provenance record attributing one effective config value to its resolution tier."""
+
+    key: str = Field(min_length=1)
+    value: Any = None
+    source: ConfigSourceTier
+    masked: bool = False
+
+    @field_validator("key")
+    @classmethod
+    def _validate_key(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="ConfigSettingProvenance.key")
+
+    @model_validator(mode="after")
+    def _enforce_secret_masking(self) -> ConfigSettingProvenance:
+        leaf = self.key.rsplit(".", 1)[-1]
+        raw_json = _ensure_json_serializable(self.value, field_name="provenance")
+        sanitized_val = redact_secrets(raw_json)
+        if isinstance(sanitized_val, str):
+            sanitized_val = scrub_secret_text(sanitized_val)
+        if is_sensitive_key(leaf) or self.masked:
+            object.__setattr__(self, "masked", self.masked or (sanitized_val is not None))
+            if sanitized_val is not None:
+                object.__setattr__(self, "value", REDACTED_VALUE)
+        else:
+            object.__setattr__(self, "value", sanitized_val)
+        return self
+
+
+class CLIResolvedConfig(_StrictModel):
+    """Schema-versioned effective CLI configuration with credential masking and provenance."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    config_path: str | None = None
+    env_file_path: str | None = None
+    storage_dir: str = Field(default=".evalforge", min_length=1)
+    dataset: str | None = None
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+    executions_path: str | None = None
+    run_id: str | None = None
+    baseline: str | None = None
+    trend_window: int | None = Field(default=None, ge=2)
+    strict: bool = False
+    target: ResolvedTargetConfig = Field(default_factory=ResolvedTargetConfig)
+    metrics: list[MetricSpecConfig] = Field(default_factory=list)
+    execution: OrchestratorConfig = Field(default_factory=OrchestratorConfig)
+    judge: ResolvedJudgeSettings = Field(default_factory=ResolvedJudgeSettings)
+    security: ResolvedSecurityConfig = Field(default_factory=ResolvedSecurityConfig)
+    gate: QualityGatePolicy = Field(default_factory=QualityGatePolicy)
+    logging: ResolvedLoggingConfig = Field(default_factory=ResolvedLoggingConfig)
+    provenance: list[ConfigSettingProvenance] = Field(default_factory=list)
+
+    @field_validator("storage_dir")
+    @classmethod
+    def _validate_storage_dir(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="CLIResolvedConfig.storage_dir")
+
+    @field_validator(
+        "config_path",
+        "env_file_path",
+        "dataset",
+        "dataset_id",
+        "dataset_version",
+        "executions_path",
+        "run_id",
+        "baseline",
+    )
+    @classmethod
+    def _validate_opt_fields(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"CLIResolvedConfig.{info.field_name}")
+
+    @field_validator("trend_window", mode="before")
+    @classmethod
+    def _validate_trend_window(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name="CLIResolvedConfig.trend_window")
+
+
+class DecoupledEvidenceDiagnostic(_StrictModel):
+    """Diagnostic record flagging retrieval-vs-answer or groundedness decoupling on a case."""
+
+    case_id: str = Field(min_length=1)
+    mandatory: bool = False
+    category: EvidenceDecouplingCategory
+    passed_metrics: list[str] = Field(min_length=1)
+    failed_metrics: list[str] = Field(min_length=1)
+    retrieved_chunk_ids: list[str] = Field(default_factory=list)
+    explanation: str = Field(min_length=1)
+
+    @field_validator("case_id", "explanation")
+    @classmethod
+    def _validate_non_empty(cls, value: str, info: ValidationInfo) -> str:
+        cleaned = _ensure_non_empty_str(
+            value, field_name=f"DecoupledEvidenceDiagnostic.{info.field_name}"
+        )
+        return scrub_secret_text(cleaned)
+
+    @field_validator("passed_metrics", "failed_metrics", "retrieved_chunk_ids")
+    @classmethod
+    def _validate_id_lists(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        return [
+            _ensure_non_empty_str(item, field_name=f"DecoupledEvidenceDiagnostic.{info.field_name}")
+            for item in value
+        ]
+
+
+class ReportDiagnosticsSummary(_StrictModel):
+    """High-visibility diagnostic summary surfaced across JSON and Markdown reports."""
+
+    mandatory_failed_case_ids: list[str] = Field(default_factory=list)
+    decoupled_evidence_cases: list[DecoupledEvidenceDiagnostic] = Field(default_factory=list)
+    anomaly_highlights: list[AnomalyFlag] = Field(default_factory=list)
+    drift_highlights: list[DriftWarning] = Field(default_factory=list)
+
+    @field_validator("mandatory_failed_case_ids")
+    @classmethod
+    def _validate_failed_ids(cls, value: list[str]) -> list[str]:
+        return [
+            _ensure_non_empty_str(
+                item, field_name="ReportDiagnosticsSummary.mandatory_failed_case_ids"
+            )
+            for item in value
+        ]
+
+
+class CalibrationGateSummary(_StrictModel):
+    """Calibration pass/fail assessment applying optional --min-agreement and --strict checks."""
+
+    min_agreement: float | None = Field(default=None, ge=0.0, le=100.0)
+    observed_agreement: float | None = Field(default=None, ge=0.0, le=100.0)
+    strict: bool = False
+    valid_cases: int = Field(ge=0)
+    inconclusive_cases: int = Field(ge=0)
+    passed: bool
+    reason: str = Field(min_length=1)
+
+    @field_validator("min_agreement", "observed_agreement", mode="before")
+    @classmethod
+    def _validate_percentages(cls, value: Any, info: ValidationInfo) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name=f"CalibrationGateSummary.{info.field_name}")
+        return round_percentage(float(value))
+
+    @field_validator("valid_cases", "inconclusive_cases", mode="before")
+    @classmethod
+    def _validate_counts(cls, value: Any, info: ValidationInfo) -> int:
+        return _reject_strict_int(value, field_name=f"CalibrationGateSummary.{info.field_name}")
+
+    @field_validator("reason")
+    @classmethod
+    def _validate_reason(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="CalibrationGateSummary.reason")
+
+
+class ReportDocument(_StrictModel):
+    """Canonical schema-validated JSON payload splitting evaluation, regression, and gate."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    report_kind: ReportKind
+    title: str = Field(min_length=1)
+    generated_at: datetime
+    evaluation: RunRecord | None = None
+    comparison: RunComparisonReport | None = None
+    trend: TrendReport | None = None
+    calibration: CalibrationReport | None = None
+    gate: QualityGateResult | None = None
+    calibration_gate: CalibrationGateSummary | None = None
+    diagnostics: ReportDiagnosticsSummary = Field(default_factory=ReportDiagnosticsSummary)
+
+    @field_validator("title")
+    @classmethod
+    def _validate_title(cls, value: str) -> str:
+        return scrub_secret_text(_ensure_non_empty_str(value, field_name="ReportDocument.title"))
+
+    @field_validator("generated_at")
+    @classmethod
+    def _normalize_generated_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @model_validator(mode="after")
+    def _validate_kind_alignment(self) -> ReportDocument:
+        if self.report_kind == ReportKind.RUN:
+            if self.evaluation is None:
+                raise ValueError("ReportDocument.evaluation is required when report_kind == 'run'")
+            if self.calibration is not None:
+                raise ValueError(
+                    "ReportDocument.calibration must be None when report_kind == 'run'"
+                )
+        elif self.report_kind == ReportKind.COMPARE:
+            if self.comparison is None:
+                raise ValueError(
+                    "ReportDocument.comparison is required when report_kind == 'compare'"
+                )
+        elif self.report_kind == ReportKind.TREND:
+            if self.trend is None:
+                raise ValueError("ReportDocument.trend is required when report_kind == 'trend'")
+        elif self.report_kind == ReportKind.CALIBRATE:
+            if self.calibration is None:
+                raise ValueError(
+                    "ReportDocument.calibration is required when report_kind == 'calibrate'"
+                )
+            if self.evaluation is not None or self.comparison is not None or self.trend is not None:
+                raise ValueError(
+                    "ReportDocument evaluation/comparison/trend must be None when "
+                    "report_kind == 'calibrate'"
+                )
+        return self
+
+
+class BaselineCommandPayload(_StrictModel):
+    """Typed CLI --json payload emitted by `evalforge-maestro baseline` actions."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    action: Literal["set", "list", "show", "delete"]
+    entry: BaselineEntry | None = None
+    baselines: list[BaselineEntry] = Field(default_factory=list)
+
+
+class ConfigValidationPayload(_StrictModel):
+    """Typed CLI --json payload emitted by `evalforge-maestro config validate`."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    valid: bool
+    config_path: str | None = None
+    env_file_path: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+    @field_validator("warnings")
+    @classmethod
+    def _validate_warnings(cls, value: list[str]) -> list[str]:
+        return [
+            scrub_secret_text(
+                _ensure_non_empty_str(w, field_name="ConfigValidationPayload.warnings")
+            )
+            for w in value
+        ]
+
+
+class CLIErrorPayload(_StrictModel):
+    """Typed CLI --json error payload emitted on exit codes 2, 3, or 4."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    exit_code: Literal[2, 3, 4]
+    error_type: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    hint: str | None = None
+
+    @field_validator("error_type", "message")
+    @classmethod
+    def _validate_required(cls, value: str, info: ValidationInfo) -> str:
+        return scrub_secret_text(
+            _ensure_non_empty_str(value, field_name=f"CLIErrorPayload.{info.field_name}")
+        )
+
+    @field_validator("hint")
+    @classmethod
+    def _validate_hint(cls, value: str | None) -> str | None:
+        cleaned = _validate_optional_str(value, field_name="CLIErrorPayload.hint")
+        return scrub_secret_text(cleaned) if cleaned is not None else None

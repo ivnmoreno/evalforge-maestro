@@ -1,0 +1,374 @@
+"""Target adapter resolution, metric suite construction, and pre-network egress checks."""
+
+from __future__ import annotations
+
+import importlib
+import sys
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+from typing import Any
+
+from evalforge_maestro.adapters import CallableAdapter, DocpipeAdapter, RAGAdapter, ReplayAdapter
+from evalforge_maestro.cli.logging_utils import CLIStructuredLogger
+from evalforge_maestro.datasets import DatasetEngine
+from evalforge_maestro.exceptions import ConfigurationError
+from evalforge_maestro.judges.base import BaseJudgeMetric
+from evalforge_maestro.judges.metrics import (
+    AnswerCorrectnessMetric,
+    AnswerRelevanceMetric,
+    ContextRelevanceMetric,
+    CustomRubricJudgeMetric,
+    GroundednessMetric,
+)
+from evalforge_maestro.judges.security import (
+    is_remote_judge_endpoint,
+    validate_local_only_target,
+    validate_pii_egress,
+    wrap_pii_guarded_metric,
+)
+from evalforge_maestro.metrics import (
+    ExactMatchMetric,
+    HitRateAtKMetric,
+    JsonSchemaValidationMetric,
+    MRRMetric,
+    NDCGAtKMetric,
+    NormalizedMatchMetric,
+    PrecisionAtKMetric,
+    RecallAtKMetric,
+)
+from evalforge_maestro.types import (
+    CLIResolvedConfig,
+    JudgeConfig,
+    Metric,
+    MetricSpecConfig,
+    RAGExtractorConfig,
+    TargetAdapter,
+    TargetType,
+)
+
+_SIMPLE_JUDGE_FACTORIES: dict[str, Callable[..., BaseJudgeMetric]] = {
+    "groundedness": GroundednessMetric,
+    "answer_relevance": AnswerRelevanceMetric,
+    "context_relevance": ContextRelevanceMetric,
+    "answer_correctness": AnswerCorrectnessMetric,
+}
+_DIRECT_DETERMINISTIC_FACTORIES: dict[str, Callable[..., Metric]] = {
+    "exact_match": ExactMatchMetric,
+    "normalized_match": NormalizedMatchMetric,
+    "json_schema_validation": JsonSchemaValidationMetric,
+    "mrr": MRRMetric,
+}
+_TOPK_RETRIEVAL_FACTORIES: dict[str, Callable[..., Metric]] = {
+    "precision_at_k": PrecisionAtKMetric,
+    "recall_at_k": RecallAtKMetric,
+    "ndcg_at_k": NDCGAtKMetric,
+    "hit_rate_at_k": HitRateAtKMetric,
+}
+
+
+def _load_python_symbol(entrypoint: str) -> Any:
+    if ":" not in entrypoint:
+        raise ConfigurationError(
+            f"Invalid target entrypoint {entrypoint!r}: expected 'module.path:attribute'"
+        )
+    module_name, attr_path = entrypoint.split(":", 1)
+    module_name = module_name.strip()
+    attr_path = attr_path.strip()
+    if not module_name or not attr_path:
+        raise ConfigurationError(
+            f"Invalid target entrypoint {entrypoint!r}: expected non-empty module and attribute"
+        )
+    cwd_str = str(Path.cwd())
+    if cwd_str not in sys.path:
+        sys.path.insert(0, cwd_str)
+    try:
+        current: Any = importlib.import_module(module_name)
+    except Exception as exc:
+        raise ConfigurationError(f"Failed importing target module {module_name!r}: {exc}") from exc
+
+    for part in attr_path.split("."):
+        if not hasattr(current, part):
+            raise ConfigurationError(
+                f"Target module {module_name!r} has no attribute {attr_path!r}"
+            )
+        current = getattr(current, part)
+    return current
+
+
+def _normalized_threshold_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(params)
+    if "pass_threshold" in normalized and "threshold" not in normalized:
+        normalized["threshold"] = normalized.pop("pass_threshold")
+    return normalized
+
+
+def _build_judge_config(
+    spec: MetricSpecConfig,
+    resolved: CLIResolvedConfig,
+) -> JudgeConfig:
+    pass_threshold = spec.params.get(
+        "pass_threshold",
+        spec.params.get("threshold", resolved.judge.pass_threshold),
+    )
+    temperature = spec.params.get("temperature", resolved.judge.temperature)
+    prompt_version = spec.params.get("prompt_version", resolved.judge.prompt_version)
+    return JudgeConfig(
+        model=str(spec.params.get("model", resolved.judge.model)),
+        api_base=spec.params.get("api_base", resolved.judge.api_base),
+        temperature=temperature,
+        pass_threshold=pass_threshold,
+        max_retries=resolved.judge.max_retries,
+        retry_backoff_seconds=resolved.judge.retry_backoff_seconds,
+        timeout_seconds=resolved.judge.timeout_seconds,
+        local_only=resolved.security.local_only or resolved.judge.local_only,
+        mock_mode=resolved.judge.mock_mode,
+        seed=resolved.judge.seed,
+        prompt_version=str(prompt_version),
+    )
+
+
+def _construct_single_metric(
+    spec: MetricSpecConfig,
+    resolved: CLIResolvedConfig,
+    *,
+    raw_api_key: str | None,
+) -> Any:
+    mid = spec.metric_id
+    params = _normalized_threshold_params(spec.params)
+
+    try:
+        direct_factory = _DIRECT_DETERMINISTIC_FACTORIES.get(mid)
+        if direct_factory is not None:
+            return direct_factory(**params)
+        topk_factory = _TOPK_RETRIEVAL_FACTORIES.get(mid)
+        if topk_factory is not None:
+            k_val = params.pop("k", 5)
+            return topk_factory(k_val, **params)
+        if mid in _SIMPLE_JUDGE_FACTORIES:
+            allowed_judge_keys = {
+                "model",
+                "api_base",
+                "temperature",
+                "pass_threshold",
+                "threshold",
+                "prompt_version",
+            }
+            unknown = set(spec.params) - allowed_judge_keys
+            if unknown:
+                raise ConfigurationError(
+                    f"Unsupported parameter(s) for judge metric {mid!r}: {sorted(unknown)}"
+                )
+            cfg = _build_judge_config(spec, resolved)
+            factory = _SIMPLE_JUDGE_FACTORIES[mid]
+            metric = factory(config=cfg, api_key=raw_api_key)
+            return wrap_pii_guarded_metric(metric, block_pii=resolved.security.block_pii)
+        if mid == "custom_rubric":
+            rubric = spec.params.get("rubric")
+            if not isinstance(rubric, str) or not rubric.strip():
+                raise ConfigurationError(
+                    "Metric 'custom_rubric' requires a non-empty 'rubric' parameter"
+                )
+            cfg = _build_judge_config(spec, resolved)
+            metric = CustomRubricJudgeMetric(
+                rubric,
+                metric_id=str(spec.params.get("metric_id", "custom_rubric")),
+                metric_version=str(spec.params.get("metric_version", "1.0.0")),
+                what_it_measures=str(
+                    spec.params.get(
+                        "what_it_measures",
+                        "Evaluates target outputs against a caller-defined rubric.",
+                    )
+                ),
+                require_reference=bool(spec.params.get("require_reference", False)),
+                require_context=bool(spec.params.get("require_context", False)),
+                config=cfg,
+                api_key=raw_api_key,
+            )
+            return wrap_pii_guarded_metric(metric, block_pii=resolved.security.block_pii)
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(
+            f"Invalid configuration parameters for metric {mid!r}: {exc}"
+        ) from exc
+
+    raise ConfigurationError(f"Unknown metric identifier: {mid!r}")
+
+
+def build_metrics_from_config(
+    resolved: CLIResolvedConfig,
+    *,
+    raw_api_key: str | None,
+) -> list[Metric]:
+    """Instantiate configured metrics for `run`, rejecting empty or unknown definitions."""
+    if not resolved.metrics:
+        raise ConfigurationError(
+            "No metrics configured. Specify --metric, EVALFORGE_METRICS, or [metrics] in config."
+        )
+    built: list[Metric] = []
+    for spec in resolved.metrics:
+        built.append(_construct_single_metric(spec, resolved, raw_api_key=raw_api_key))
+    return built
+
+
+def build_calibration_judge(
+    spec: MetricSpecConfig,
+    resolved: CLIResolvedConfig,
+    *,
+    raw_api_key: str | None,
+) -> BaseJudgeMetric:
+    """Build one BaseJudgeMetric instance for judge calibration workflows."""
+    if spec.metric_id not in _SIMPLE_JUDGE_FACTORIES and spec.metric_id != "custom_rubric":
+        raise ConfigurationError(
+            f"Metric {spec.metric_id!r} does not support judge calibration "
+            f"(choose one of: {sorted((*_SIMPLE_JUDGE_FACTORIES, 'custom_rubric'))})"
+        )
+    metric = _construct_single_metric(spec, resolved, raw_api_key=raw_api_key)
+    return metric  # type: ignore[no-any-return]
+
+
+def _validate_replay_alignment(
+    dataset: DatasetEngine,
+    adapter: ReplayAdapter,
+    *,
+    max_dataset_cases: int | None,
+    logger: CLIStructuredLogger,
+) -> None:
+    selected_ids: set[str] = set()
+    missing_ids: list[str] = []
+    for case in dataset.iter_cases(max_cases=max_dataset_cases):
+        selected_ids.add(case.id)
+        if case.id not in adapter.case_ids:
+            missing_ids.append(case.id)
+
+    if missing_ids:
+        preview = ", ".join(missing_ids[:10])
+        suffix = f" (+{len(missing_ids) - 10} more)" if len(missing_ids) > 10 else ""
+        raise ConfigurationError(
+            f"Execution replay file is missing records for selected dataset case ID(s): "
+            f"{preview}{suffix}"
+        )
+
+    unused = sorted(adapter.case_ids - selected_ids)
+    if unused:
+        logger.warning(
+            f"Execution replay contains {len(unused)} unused trace record(s) absent from "
+            "the active dataset selection."
+        )
+
+
+def build_target_adapter(
+    resolved: CLIResolvedConfig,
+    *,
+    dataset: DatasetEngine,
+    logger: CLIStructuredLogger,
+) -> TargetAdapter:
+    """Resolve live adapter (callable, rag, docpipe) or validated offline ReplayAdapter."""
+    t_cfg = resolved.target
+    has_executions = resolved.executions_path is not None
+    has_live_entrypoint = t_cfg.entrypoint is not None
+    explicit_type = t_cfg.target_type
+
+    if has_executions and (
+        has_live_entrypoint or (explicit_type is not None and explicit_type != TargetType.REPLAY)
+    ):
+        raise ConfigurationError(
+            "Conflicting target options: --executions replay cannot be combined with a live target"
+        )
+
+    effective_type = explicit_type
+    if effective_type is None:
+        if has_executions:
+            effective_type = TargetType.REPLAY
+        elif has_live_entrypoint:
+            effective_type = TargetType.CALLABLE
+        else:
+            raise ConfigurationError(
+                "No target configured. Pass --executions <path> or --target <module:symbol> "
+                "(or configure [target] in evalforge.toml)."
+            )
+
+    if effective_type == TargetType.REPLAY:
+        if not resolved.executions_path:
+            raise ConfigurationError("Replay target mode requires --executions <path>")
+        adapter = ReplayAdapter.from_file(
+            resolved.executions_path,
+            system_version=t_cfg.system_version,
+            model_id=t_cfg.model_id,
+        )
+        _validate_replay_alignment(
+            dataset,
+            adapter,
+            max_dataset_cases=resolved.execution.max_dataset_cases,
+            logger=logger,
+        )
+        return adapter
+
+    if effective_type == TargetType.DOCPIPE:
+        if has_executions:
+            raise ConfigurationError("Docpipe target cannot be combined with --executions")
+        retrieve_kwargs = (
+            {"top_k": t_cfg.docpipe_top_k} if t_cfg.docpipe_top_k is not None else None
+        )
+        return DocpipeAdapter(
+            mode=t_cfg.docpipe_mode,
+            collection=t_cfg.docpipe_collection,
+            retrieve_kwargs=retrieve_kwargs,
+            system_version=t_cfg.system_version,
+            model_id=t_cfg.model_id,
+        )
+
+    if not t_cfg.entrypoint:
+        raise ConfigurationError(
+            f"Target type {effective_type.value!r} requires --target <module:symbol>"
+        )
+    target_fn = _load_python_symbol(t_cfg.entrypoint)
+    pass_case = t_cfg.arg_mode == "case"
+
+    if effective_type == TargetType.CALLABLE:
+        return CallableAdapter(
+            target_fn,
+            system_version=t_cfg.system_version,
+            model_id=t_cfg.model_id,
+            pass_case=pass_case,
+        )
+
+    extractors = RAGExtractorConfig(**t_cfg.rag_extractors) if t_cfg.rag_extractors else None
+    return RAGAdapter(
+        target_fn,
+        extractors=extractors,
+        system_version=t_cfg.system_version,
+        model_id=t_cfg.model_id,
+        pass_case=pass_case,
+    )
+
+
+def preflight_run_security(
+    *,
+    resolved: CLIResolvedConfig,
+    dataset: DatasetEngine,
+    metrics: Sequence[Metric],
+) -> None:
+    """Enforce --local-only endpoint locality and opt-in --block-pii pre-network checks."""
+    any_remote_judge = False
+    for metric in metrics:
+        judge_cfg = getattr(metric, "judge_config", None)
+        if isinstance(judge_cfg, JudgeConfig):
+            validate_local_only_target(judge_cfg)
+            if is_remote_judge_endpoint(judge_cfg):
+                any_remote_judge = True
+
+    if resolved.security.block_pii and not resolved.judge.mock_mode:
+        is_remote_docpipe = (
+            resolved.target.target_type == TargetType.DOCPIPE
+            and resolved.target.docpipe_mode == "answer_detailed"
+        )
+        if any_remote_judge or is_remote_docpipe:
+            for case in dataset.iter_cases(max_cases=resolved.execution.max_dataset_cases):
+                validate_pii_egress(
+                    {
+                        "input": case.input,
+                        "reference": case.reference,
+                        "expected_context": case.expected_context,
+                    },
+                    enabled=True,
+                    context_label=f"dataset case {case.id!r}",
+                )
