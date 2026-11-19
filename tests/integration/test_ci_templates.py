@@ -7,7 +7,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from evalforge_maestro.types import ConfigValidationPayload, GateDecision, ReportDocument
+from evalforge_maestro.types import (
+    ConfigValidationPayload,
+    GateDecision,
+    MetricStatus,
+    ReportDocument,
+)
 
 
 def test_examples_ci_template_executes_end_to_end(tmp_path: Path) -> None:
@@ -71,6 +76,12 @@ def test_examples_ci_template_executes_end_to_end(tmp_path: Path) -> None:
     doc = ReportDocument.model_validate_json(run_proc.stdout.strip())
     assert doc.gate is not None
     assert doc.gate.decision == GateDecision.PASS
+    assert doc.evaluation is not None
+    for case_res in doc.evaluation.case_results:
+        gr = case_res.metrics["groundedness"]
+        assert gr.status == MetricStatus.PASS
+        assert gr.label == "pass"
+        assert gr.anomaly_flags == []
     assert (tmp_path / "evalforge-report.json").is_file()
     md_text = (tmp_path / "evalforge-report.md").read_text(encoding="utf-8")
     assert "## Evaluation" in md_text
