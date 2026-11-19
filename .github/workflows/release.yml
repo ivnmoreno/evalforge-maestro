@@ -97,14 +97,28 @@ jobs:
           uv venv "$RUNNER_TEMP/testpypi-venv" --python "3.12"
           for attempt in 1 2 3 4 5; do
             if uv pip install --python "$RUNNER_TEMP/testpypi-venv" \
-              --index-url https://test.pypi.org/simple/ \
-              --extra-index-url https://pypi.org/simple/ \
+              --default-index https://test.pypi.org/simple/ \
+              --no-deps \
               "evalforge-maestro==${VERSION}"; then
               break
             fi
             [ "$attempt" -lt 5 ] || exit 1
             sleep 10
           done
+          "$RUNNER_TEMP/testpypi-venv/bin/python" - <<'PY' > "$RUNNER_TEMP/testpypi-deps.txt"
+          import importlib.metadata
+          import re
+
+          for req in importlib.metadata.requires("evalforge-maestro") or []:
+              marker = req.split(";", 1)[1] if ";" in req else ""
+              if not re.search(r"\bextra\s*==", marker):
+                  print(req)
+          PY
+          if [ -s "$RUNNER_TEMP/testpypi-deps.txt" ]; then
+            uv pip install --python "$RUNNER_TEMP/testpypi-venv" \
+              --default-index https://pypi.org/simple/ \
+              -r "$RUNNER_TEMP/testpypi-deps.txt"
+          fi
           "$RUNNER_TEMP/testpypi-venv/bin/evalforge-maestro" --version
           "$RUNNER_TEMP/testpypi-venv/bin/evalforge-maestro" --help >/dev/null
           "$RUNNER_TEMP/testpypi-venv/bin/evalforge_maestro" --help >/dev/null
