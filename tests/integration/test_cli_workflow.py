@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import stat
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -742,3 +744,152 @@ def test_cli_calibrate_and_config_precedence_with_secret_masking(
     val_payload = ConfigValidationPayload.model_validate_json(out_val)
     assert val_payload.valid is True
     assert len(val_payload.warnings) == 1
+
+
+def test_cli_run_docpipe_forwards_options_and_enforces_local_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    recorded_retrieve: list[tuple[str, dict[str, Any]]] = []
+    recorded_answer: list[tuple[Any, dict[str, Any]]] = []
+
+    class _Chunk:
+        def __init__(self, cid: str, text: str) -> None:
+            self.id = cid
+            self.text = text
+            self.parent_id = None
+            self.metadata: dict[str, Any] = {}
+            self.score = 0.95
+
+    def fake_retrieve(question: str, **kwargs: Any) -> list[_Chunk]:
+        recorded_retrieve.append((question, kwargs))
+        return [_Chunk("doc-sla", "EvalForge Pro gives 99.9% SLA.")]
+
+    def fake_build_chat(question: str, sections: Any) -> list[dict[str, str]]:
+        return [{"role": "user", "content": f"{question} :: {len(sections)}"}]
+
+    def fake_answer_detailed(prompt: Any, **kwargs: Any) -> dict[str, Any]:
+        recorded_answer.append((prompt, kwargs))
+        return {"text": "99.9% SLA", "model": kwargs.get("model", "ollama/llama3.2")}
+
+    fake_pkg = types.ModuleType("docpipe_maestro")
+    fake_pkg.retrieve = fake_retrieve  # type: ignore[attr-defined]
+    fake_pkg.build_chat_messages = fake_build_chat  # type: ignore[attr-defined]
+    fake_pkg.answer_detailed = fake_answer_detailed  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "docpipe_maestro", fake_pkg)
+
+    ds_path = tmp_path / "dp_ds.jsonl"
+    _write_jsonl(
+        ds_path,
+        [
+            {
+                "id": "q1",
+                "input": "Contact alice@example.com for SLA details?",
+                "reference": "99.9% SLA",
+                "expected_context": ["doc-sla"],
+            }
+        ],
+    )
+
+    # Loopback docpipe + --local-only + --block-pii runs cleanly without false-positive PII block
+    code_ok, out_ok, _ = _run_cli(
+        [
+            "run",
+            "--dataset",
+            str(ds_path),
+            "--target-type",
+            "docpipe",
+            "--docpipe-mode",
+            "answer_detailed",
+            "--docpipe-collection",
+            "smoke",
+            "--docpipe-persist-dir",
+            "./custom-docpipe",
+            "--docpipe-top-k",
+            "2",
+            "--docpipe-embed-model",
+            "local/bge-small",
+            "--docpipe-answer-model",
+            "ollama_chat/qwen2.5:1.5b-instruct",
+            "--docpipe-api-base",
+            "http://127.0.0.1:11434",
+            "--docpipe-searcher",
+            "fts5_hybrid",
+            "--docpipe-rerank",
+            "--local-only",
+            "--block-pii",
+            "--mock",
+            "--metric",
+            "exact_match",
+            "--metric",
+            "precision_at_k:k=1",
+            "--json",
+        ],
+        capsys,
+    )
+    assert code_ok == 0
+    rep = ReportDocument.model_validate_json(out_ok)
+    assert rep.evaluation is not None
+    assert rep.evaluation.aggregates["exact_match"].mean_score == 1.0
+    assert recorded_retrieve == [
+        (
+            "Contact alice@example.com for SLA details?",
+            {
+                "collection": "smoke",
+                "persist_dir": "./custom-docpipe",
+                "top_k": 2,
+                "embed_model": "local/bge-small",
+                "searcher": "fts5_hybrid",
+                "rerank": True,
+                "local_only": True,
+            },
+        )
+    ]
+    assert recorded_answer[0][1] == {
+        "model": "ollama_chat/qwen2.5:1.5b-instruct",
+        "api_base": "http://127.0.0.1:11434",
+        "local_only": True,
+        "has_context": True,
+    }
+
+    # Remote docpipe answer model under --local-only -> exit 4 pre-network
+    code_blocked, out_blocked, _ = _run_cli(
+        [
+            "run",
+            "--dataset",
+            str(ds_path),
+            "--target-type",
+            "docpipe",
+            "--docpipe-answer-model",
+            "openai/gpt-4o-mini",
+            "--local-only",
+            "--metric",
+            "exact_match",
+            "--json",
+        ],
+        capsys,
+    )
+    assert code_blocked == 4
+    assert CLIErrorPayload.model_validate_json(out_blocked).exit_code == 4
+
+    # Remote docpipe answer model + --block-pii -> exit 4 pre-network
+    code_pii, out_pii, _ = _run_cli(
+        [
+            "run",
+            "--dataset",
+            str(ds_path),
+            "--target-type",
+            "docpipe",
+            "--docpipe-answer-model",
+            "openai/gpt-4o-mini",
+            "--block-pii",
+            "--metric",
+            "exact_match",
+            "--json",
+        ],
+        capsys,
+    )
+    assert code_pii == 4
+    assert CLIErrorPayload.model_validate_json(out_pii).exit_code == 4

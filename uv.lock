@@ -1224,7 +1224,7 @@ wheels = [
 
 [[package]]
 name = "docpipe-maestro"
-version = "0.3.0"
+version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chromadb" },
@@ -1233,9 +1233,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/09/4f/a3bfef3e4d5042fd011ad55ccd7a193800c4d5771fdd4ad463f520c89b4a/docpipe_maestro-0.3.0.tar.gz", hash = "sha256:bf6f4ad6a1b796e54ad7a190c131e79d6d63918b96e8ff2896c99f88ef64f716", size = 356224, upload-time = "2026-11-17T19:58:57.397Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/80/2e1e8140494684d586238e739b9d1abcf23f7f93ec8354fac46cff34b151/docpipe_maestro-0.4.1.tar.gz", hash = "sha256:ab60aabe81f9ea663bb69439e859369f52152d090c27b7a41522984937e7f0a9", size = 380412, upload-time = "2026-11-19T22:17:32.813Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/59/d64c45e7471096a968b602927208c08e3333cf208c6c7c4c2ba3c51dc96a/docpipe_maestro-0.3.0-py3-none-any.whl", hash = "sha256:f334605de90156790b1f7c6a9ef4ad71fe6ad2acb84ec2beb543174e0c1ae636", size = 149197, upload-time = "2026-11-17T19:58:55.574Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/ab/e44bab9c4508446f3f36f2494f6548c4a50ff0b4cf23480d54bdb1938040/docpipe_maestro-0.4.1-py3-none-any.whl", hash = "sha256:b2b6c50913f8d80bbe6c05bd69da512dea678155129b84bc315aa2e03b570eaa", size = 162918, upload-time = "2026-11-19T22:17:31.308Z" },
 ]
 
 [[package]]
@@ -1286,7 +1286,7 @@ judges = [
 [package.metadata]
 requires-dist = [
     { name = "commitizen", marker = "extra == 'dev'", specifier = ">=4.0" },
-    { name = "docpipe-maestro", marker = "extra == 'docpipe'", specifier = ">=0.2" },
+    { name = "docpipe-maestro", marker = "extra == 'docpipe'", specifier = ">=0.4.1" },
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "litellm", marker = "extra == 'judges'", specifier = ">=1.84.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },

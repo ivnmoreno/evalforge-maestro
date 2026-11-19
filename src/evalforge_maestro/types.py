@@ -1764,15 +1764,35 @@ class ResolvedTargetConfig(_StrictModel):
     rag_extractors: dict[str, str] = Field(default_factory=dict)
     docpipe_mode: Literal["answer_detailed", "retrieve"] = "answer_detailed"
     docpipe_collection: str | None = None
+    docpipe_persist_dir: str | None = None
     docpipe_top_k: int | None = Field(default=None, ge=1)
+    docpipe_embed_model: str | None = None
+    docpipe_answer_model: str | None = None
+    docpipe_api_base: str | None = None
+    docpipe_searcher: str | None = None
+    docpipe_rerank: bool = False
 
-    @field_validator("entrypoint", "system_version", "model_id", "docpipe_collection")
+    @field_validator(
+        "entrypoint",
+        "system_version",
+        "model_id",
+        "docpipe_collection",
+        "docpipe_persist_dir",
+        "docpipe_embed_model",
+        "docpipe_answer_model",
+        "docpipe_searcher",
+    )
     @classmethod
     def _validate_opt_strings(cls, value: str | None, info: ValidationInfo) -> str | None:
         cleaned = _validate_optional_str(
             value, field_name=f"ResolvedTargetConfig.{info.field_name}"
         )
         return scrub_secret_text(cleaned) if cleaned is not None else None
+
+    @field_validator("docpipe_api_base")
+    @classmethod
+    def _validate_docpipe_api_base(cls, value: str | None) -> str | None:
+        return _validate_http_api_base(value, field_name="ResolvedTargetConfig.docpipe_api_base")
 
     @field_validator("rag_extractors")
     @classmethod

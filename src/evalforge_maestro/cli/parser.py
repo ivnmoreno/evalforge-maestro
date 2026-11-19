@@ -131,7 +131,38 @@ def _add_run_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
         help="Docpipe integration mode.",
     )
     p.add_argument("--docpipe-collection", default=argparse.SUPPRESS, help="Docpipe collection.")
+    p.add_argument(
+        "--docpipe-persist-dir",
+        default=argparse.SUPPRESS,
+        help="Docpipe persistence directory path (default: .docpipe).",
+    )
     p.add_argument("--docpipe-top-k", type=int, default=argparse.SUPPRESS, help="Docpipe top_k.")
+    p.add_argument(
+        "--docpipe-embed-model",
+        default=argparse.SUPPRESS,
+        help="Docpipe embedding model override passed to retrieve().",
+    )
+    p.add_argument(
+        "--docpipe-answer-model",
+        default=argparse.SUPPRESS,
+        help="Docpipe generation model override passed to answer_detailed().",
+    )
+    p.add_argument(
+        "--docpipe-api-base",
+        default=argparse.SUPPRESS,
+        help="Docpipe generation api_base URL override passed to answer_detailed().",
+    )
+    p.add_argument(
+        "--docpipe-searcher",
+        default=argparse.SUPPRESS,
+        help="Docpipe retrieval searcher strategy (e.g., default, fts5_hybrid).",
+    )
+    p.add_argument(
+        "--docpipe-rerank",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Enable docpipe second-stage cross-encoder reranking during retrieve().",
+    )
     p.add_argument(
         "--metric",
         action="append",
