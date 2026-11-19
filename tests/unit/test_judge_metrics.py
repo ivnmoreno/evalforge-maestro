@@ -425,3 +425,50 @@ def test_mock_edge_cases_empty_outputs_offtopic_custom_rubric_and_batch_empty() 
     res_empty_seq = g_empty_seq.evaluate(case, empty_exec)
     assert res_empty_seq.status == MetricStatus.INCONCLUSIVE
     assert res_empty_seq.score is None
+
+
+def test_mock_groundedness_preserves_decimals_and_dotted_identifiers() -> None:
+    cfg = JudgeConfig(model="mock-judge", mock_mode=True, pass_threshold=0.5)
+    metric = GroundednessMetric(config=cfg)
+
+    grounded_case = EvaluationCase(id="dec-ok", input="What is the SLA and config version?")
+    grounded_exec = ExecutionResult(
+        case_id="dec-ok",
+        input=grounded_case.input,
+        output="99.9% monthly uptime SLA for v0.1.0 in evalforge.toml.",
+        retrieved_chunks=[
+            RetrievedChunk(
+                id="doc-sla",
+                text=(
+                    "EvalForge Pro guarantees 99.9% monthly uptime SLA "
+                    "using v0.1.0 and evalforge.toml."
+                ),
+            )
+        ],
+        elapsed_seconds=0.01,
+    )
+    ok_res = metric.evaluate(grounded_case, grounded_exec)
+    assert ok_res.status == MetricStatus.PASS
+    assert ok_res.score == 1.0
+    assert ok_res.label == "pass"
+    assert ok_res.anomaly_flags == []
+    assert not any(ev.startswith("UNSUPPORTED:") for ev in ok_res.evidence)
+
+    mixed_case = EvaluationCase(id="dec-mixed", input="What is the SLA?")
+    mixed_exec = ExecutionResult(
+        case_id="dec-mixed",
+        input=mixed_case.input,
+        output="99.9% monthly uptime SLA. Includes unlimited teleportation.",
+        retrieved_chunks=[
+            RetrievedChunk(
+                id="doc-sla",
+                text="EvalForge Pro provides a 99.9% monthly uptime SLA.",
+            )
+        ],
+        elapsed_seconds=0.01,
+    )
+    mixed_res = metric.evaluate(mixed_case, mixed_exec)
+    assert mixed_res.label == "fail"
+    assert "unsupported_claims_present" in mixed_res.anomaly_flags
+    assert any("teleportation" in ev for ev in mixed_res.evidence)
+    assert not any(ev == "UNSUPPORTED: 99" for ev in mixed_res.evidence)

@@ -59,7 +59,9 @@ _STOPWORDS = frozenset(
     }
 )
 _TOKEN_RE = re.compile(r"[a-z0-9]+(?:[.%-][a-z0-9]+)*")
-_CLAUSE_SPLIT_RE = re.compile(r"[.!?\n;]+")
+# Split sentence/clause boundaries without breaking decimals or dotted
+# identifiers (e.g. 99.9%, v0.1.0, evalforge.toml).
+_CLAUSE_SPLIT_RE = re.compile(r"(?:[!?;\n]|(?<![A-Za-z0-9])\.|\.(?![A-Za-z0-9]))+")
 
 
 def _to_text(value: Any) -> str:
