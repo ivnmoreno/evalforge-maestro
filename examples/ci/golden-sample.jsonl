@@ -1,0 +1,3 @@
+{"id": "ci-1", "input": "What uptime SLA does EvalForge Pro guarantee?", "reference": "99.9% monthly uptime SLA", "expected_context": ["doc-sla"], "criteria": {"mandatory": true}}
+{"id": "ci-2", "input": "How long do enterprise refunds take?", "reference": "14 business days", "expected_context": ["doc-refund"], "criteria": {"mandatory": true}}
+{"id": "ci-3", "input": "Does local-only mode prevent external judge calls?", "reference": "Yes, local-only blocks non-loopback endpoints pre-network.", "expected_context": ["doc-security"], "criteria": {"mandatory": false}}

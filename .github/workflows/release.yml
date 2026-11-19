@@ -105,6 +105,9 @@ jobs:
             [ "$attempt" -lt 5 ] || exit 1
             sleep 10
           done
+          "$RUNNER_TEMP/testpypi-venv/bin/evalforge-maestro" --version
+          "$RUNNER_TEMP/testpypi-venv/bin/evalforge-maestro" --help >/dev/null
+          "$RUNNER_TEMP/testpypi-venv/bin/evalforge_maestro" --help >/dev/null
           VERSION="${GITHUB_REF_NAME#v}" \
             "$RUNNER_TEMP/testpypi-venv/bin/python" - <<'PY'
           import os

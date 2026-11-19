@@ -118,16 +118,25 @@ jobs:
           uv venv "$RUNNER_TEMP/clean-wheel-venv" --python "${{ matrix.python-version }}"
           if [ -f "$RUNNER_TEMP/clean-wheel-venv/bin/python" ]; then
             VENV_PY="$RUNNER_TEMP/clean-wheel-venv/bin/python"
+            VENV_CLI="$RUNNER_TEMP/clean-wheel-venv/bin/evalforge-maestro"
+            VENV_CLI_ALT="$RUNNER_TEMP/clean-wheel-venv/bin/evalforge_maestro"
           else
             VENV_PY="$RUNNER_TEMP/clean-wheel-venv/Scripts/python.exe"
+            VENV_CLI="$RUNNER_TEMP/clean-wheel-venv/Scripts/evalforge-maestro.exe"
+            VENV_CLI_ALT="$RUNNER_TEMP/clean-wheel-venv/Scripts/evalforge_maestro.exe"
           fi
           uv pip install --python "$VENV_PY" dist/*.whl
+          "$VENV_CLI" --version
+          "$VENV_CLI" --help >/dev/null
+          "$VENV_CLI_ALT" --help >/dev/null
           "$VENV_PY" - <<'PY'
           import sys
           import evalforge_maestro
 
           assert "docpipe_maestro" not in sys.modules
           assert "litellm" not in sys.modules
+          assert "tomllib" not in sys.modules
+          assert "tomli" not in sys.modules
           try:
               evalforge_maestro.DocpipeAdapter()
           except evalforge_maestro.MissingExtraError as exc:
@@ -155,6 +164,7 @@ jobs:
           else:
               raise AssertionError("Expected MissingExtraError for judges")
           PY
+          "$VENV_CLI" run --config examples/ci/evalforge.toml --storage-dir "$RUNNER_TEMP/clean-wheel-store" --mock --local-only --strict --json >/dev/null
 
       - name: Verify clean sdist install on Linux
         if: runner.os == 'Linux' && matrix.python-version == '3.13'
@@ -162,6 +172,8 @@ jobs:
         run: |
           uv venv "$RUNNER_TEMP/clean-sdist-venv" --python "${{ matrix.python-version }}"
           uv pip install --python "$RUNNER_TEMP/clean-sdist-venv/bin/python" dist/*.tar.gz
+          "$RUNNER_TEMP/clean-sdist-venv/bin/evalforge-maestro" --version
+          "$RUNNER_TEMP/clean-sdist-venv/bin/evalforge-maestro" --help >/dev/null
           "$RUNNER_TEMP/clean-sdist-venv/bin/python" - <<'PY'
           import sys
           import evalforge_maestro
