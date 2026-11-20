@@ -95,14 +95,15 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           uv venv "$RUNNER_TEMP/testpypi-venv" --python "3.12"
-          for attempt in 1 2 3 4 5; do
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
             if uv pip install --python "$RUNNER_TEMP/testpypi-venv" \
               --default-index https://test.pypi.org/simple/ \
               --no-deps \
+              --refresh-package evalforge-maestro \
               "evalforge-maestro==${VERSION}"; then
               break
             fi
-            [ "$attempt" -lt 5 ] || exit 1
+            [ "$attempt" -lt 10 ] || exit 1
             sleep 10
           done
           "$RUNNER_TEMP/testpypi-venv/bin/python" - <<'PY' > "$RUNNER_TEMP/testpypi-deps.txt"
