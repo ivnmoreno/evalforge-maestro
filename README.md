@@ -105,7 +105,7 @@ print(run.aggregates["recall_at_k"].mean_score)
 
 ## GitHub Actions CI Template
 
-Copy [`examples/ci/evalforge-ci.yml`](examples/ci/evalforge-ci.yml) and [`examples/ci/evalforge.toml`](examples/ci/evalforge.toml) into your project to gate pull requests offline (`--mock --local-only`) and publish Markdown summaries directly to `$GITHUB_STEP_SUMMARY`.
+Copy [`examples/ci/evalforge-ci.yml`](examples/ci/evalforge-ci.yml) and [`examples/ci/evalforge.toml`](examples/ci/evalforge.toml) (for offline `--executions` replay) or [`examples/ci/evalforge-docpipe.toml`](examples/ci/evalforge-docpipe.toml) (for `[docpipe]` retrieval gating) into your project to gate pull requests offline (`--mock --local-only`) and publish Markdown summaries directly to `$GITHUB_STEP_SUMMARY`. See [`examples/ci/README.md`](examples/ci/README.md) for consumer setup details.
 
 ## Implemented MVP Milestones (M1–M5)
 
