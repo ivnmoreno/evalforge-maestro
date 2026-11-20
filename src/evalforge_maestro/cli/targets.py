@@ -305,13 +305,33 @@ def build_target_adapter(
     if effective_type == TargetType.DOCPIPE:
         if has_executions:
             raise ConfigurationError("Docpipe target cannot be combined with --executions")
-        retrieve_kwargs = (
-            {"top_k": t_cfg.docpipe_top_k} if t_cfg.docpipe_top_k is not None else None
-        )
+        retrieve_kwargs: dict[str, Any] = {}
+        if t_cfg.docpipe_top_k is not None:
+            retrieve_kwargs["top_k"] = t_cfg.docpipe_top_k
+        if t_cfg.docpipe_embed_model is not None:
+            retrieve_kwargs["embed_model"] = t_cfg.docpipe_embed_model
+        if t_cfg.docpipe_searcher is not None:
+            retrieve_kwargs["searcher"] = t_cfg.docpipe_searcher
+        if t_cfg.docpipe_rerank:
+            retrieve_kwargs["rerank"] = True
+        if resolved.security.local_only:
+            retrieve_kwargs["local_only"] = True
+
+        answer_kwargs: dict[str, Any] = {}
+        if t_cfg.docpipe_mode == "answer_detailed":
+            if t_cfg.docpipe_answer_model is not None:
+                answer_kwargs["model"] = t_cfg.docpipe_answer_model
+            if t_cfg.docpipe_api_base is not None:
+                answer_kwargs["api_base"] = t_cfg.docpipe_api_base
+            if resolved.security.local_only:
+                answer_kwargs["local_only"] = True
+
         return DocpipeAdapter(
             mode=t_cfg.docpipe_mode,
             collection=t_cfg.docpipe_collection,
-            retrieve_kwargs=retrieve_kwargs,
+            persist_dir=t_cfg.docpipe_persist_dir,
+            retrieve_kwargs=retrieve_kwargs or None,
+            answer_kwargs=answer_kwargs or None,
             system_version=t_cfg.system_version,
             model_id=t_cfg.model_id,
         )
@@ -341,6 +361,39 @@ def build_target_adapter(
     )
 
 
+def _docpipe_judge_probe(
+    model: str | None,
+    *,
+    api_base: str | None = None,
+    local_only: bool = False,
+) -> JudgeConfig | None:
+    if model is None and api_base is None:
+        return None
+    if model is not None and model.strip().lower().startswith("local/"):
+        if api_base is None:
+            return None
+        probe_model = "ollama/local"
+    else:
+        probe_model = model or "ollama/llama3.2"
+    return JudgeConfig(
+        model=probe_model,
+        api_base=api_base,
+        local_only=local_only,
+        mock_mode=False,
+    )
+
+
+def _docpipe_endpoint_is_remote(model: str | None, *, api_base: str | None = None) -> bool:
+    probe = _docpipe_judge_probe(model, api_base=api_base, local_only=False)
+    return False if probe is None else is_remote_judge_endpoint(probe)
+
+
+def _validate_docpipe_locality(model: str | None, *, api_base: str | None = None) -> None:
+    probe = _docpipe_judge_probe(model, api_base=api_base, local_only=True)
+    if probe is not None:
+        validate_local_only_target(probe)
+
+
 def preflight_run_security(
     *,
     resolved: CLIResolvedConfig,
@@ -356,11 +409,27 @@ def preflight_run_security(
             if is_remote_judge_endpoint(judge_cfg):
                 any_remote_judge = True
 
+    t_cfg = resolved.target
+    if resolved.security.local_only and t_cfg.target_type == TargetType.DOCPIPE:
+        _validate_docpipe_locality(t_cfg.docpipe_embed_model)
+        if t_cfg.docpipe_mode == "answer_detailed":
+            _validate_docpipe_locality(t_cfg.docpipe_answer_model, api_base=t_cfg.docpipe_api_base)
+        elif t_cfg.docpipe_api_base is not None:
+            _validate_docpipe_locality(None, api_base=t_cfg.docpipe_api_base)
+
     if resolved.security.block_pii and not resolved.judge.mock_mode:
-        is_remote_docpipe = (
-            resolved.target.target_type == TargetType.DOCPIPE
-            and resolved.target.docpipe_mode == "answer_detailed"
-        )
+        is_remote_docpipe = False
+        if not resolved.security.local_only and t_cfg.target_type == TargetType.DOCPIPE:
+            is_remote_docpipe = _docpipe_endpoint_is_remote(t_cfg.docpipe_embed_model) or (
+                t_cfg.docpipe_mode == "answer_detailed"
+                and (
+                    t_cfg.docpipe_answer_model is None
+                    or _docpipe_endpoint_is_remote(
+                        t_cfg.docpipe_answer_model,
+                        api_base=t_cfg.docpipe_api_base,
+                    )
+                )
+            )
         if any_remote_judge or is_remote_docpipe:
             for case in dataset.iter_cases(max_cases=resolved.execution.max_dataset_cases):
                 validate_pii_egress(

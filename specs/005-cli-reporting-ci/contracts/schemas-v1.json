@@ -62,7 +62,19 @@
           "default": "answer_detailed"
         },
         "docpipe_collection": { "type": ["string", "null"], "minLength": 1, "default": null },
-        "docpipe_top_k": { "type": ["integer", "null"], "minimum": 1, "default": null }
+        "docpipe_persist_dir": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "docpipe_top_k": { "type": ["integer", "null"], "minimum": 1, "default": null },
+        "docpipe_embed_model": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "docpipe_answer_model": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "docpipe_api_base": {
+          "anyOf": [
+            { "type": "string", "pattern": "^https?://[^\\s@?#]+$" },
+            { "type": "null" }
+          ],
+          "default": null
+        },
+        "docpipe_searcher": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "docpipe_rerank": { "type": "boolean", "default": false }
       }
     },
     "ResolvedJudgeSettings": {

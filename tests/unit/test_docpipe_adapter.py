@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
+import types
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,7 +22,15 @@ from evalforge_maestro.exceptions import (
     EmptyDatasetError,
     MissingExtraError,
 )
-from evalforge_maestro.types import EvaluationCase, ExpectedContextItem, TargetAdapter, TokenUsage
+from evalforge_maestro.execution import EvaluationOrchestrator
+from evalforge_maestro.metrics import exact_match
+from evalforge_maestro.types import (
+    EvaluationCase,
+    ExpectedContextItem,
+    OrchestratorConfig,
+    TargetAdapter,
+    TokenUsage,
+)
 
 
 @dataclass
@@ -457,3 +467,62 @@ def test_docpipe_adapter_lazy_module_resolution_and_edge_branches(
         assert len(empty_in_res.errors) == 1
 
     asyncio.run(_run())
+
+
+def test_docpipe_adapter_runs_concurrent_live_retrieve_and_guards_local_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    barrier = threading.Barrier(4, timeout=2.0)
+
+    def fake_retrieve(question: str, **_: Any) -> list[_SimDocpipeChunk]:
+        barrier.wait()
+        return [_SimDocpipeChunk(id="c1", text=f"ctx:{question}")]
+
+    fake_retrieve.__module__ = "docpipe_maestro.query.retriever"
+
+    def fake_build_chat(q: str, sections: Any) -> list[dict[str, str]]:
+        return [{"role": "user", "content": f"{q}:{len(sections)}"}]
+
+    def fake_answer(prompt: Any, **_: Any) -> _SimGenerationResult:
+        return _SimGenerationResult(text=f"ok:{prompt[0]['content']}")
+
+    fake_pkg = types.ModuleType("docpipe_maestro")
+    fake_pkg.retrieve = fake_retrieve  # type: ignore[attr-defined]
+    fake_pkg.build_chat_messages = fake_build_chat  # type: ignore[attr-defined]
+    fake_pkg.answer_detailed = fake_answer  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "docpipe_maestro", fake_pkg)
+
+    adapter = DocpipeAdapter(mode="answer_detailed", collection="smoke")
+    ds = DatasetEngine(
+        [{"id": f"c{i}", "input": f"q{i}", "reference": f"ok:q{i}:1"} for i in range(4)]
+    )
+    run = EvaluationOrchestrator(config=OrchestratorConfig(max_concurrency=4)).run(
+        ds, adapter, [exact_match]
+    )
+    assert run.aggregates["exact_match"].pass_count == 4
+
+    # Restricted signature without local_only parameter drops local_only safely
+    def legacy_retrieve(question: str, *, collection: str = "default") -> list[_SimDocpipeChunk]:
+        return [_SimDocpipeChunk(id=collection, text=question)]
+
+    legacy_retrieve.__module__ = "docpipe_maestro.query.retriever"
+
+    def legacy_answer(prompt: Any, *, has_context: bool = True) -> _SimGenerationResult:
+        del prompt, has_context
+        return _SimGenerationResult(text="legacy-ok")
+
+    legacy_pkg = types.ModuleType("docpipe_maestro")
+    legacy_pkg.retrieve = legacy_retrieve  # type: ignore[attr-defined]
+    legacy_pkg.build_chat_messages = fake_build_chat  # type: ignore[attr-defined]
+    legacy_pkg.answer_detailed = legacy_answer  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "docpipe_maestro", legacy_pkg)
+
+    legacy_adapter = DocpipeAdapter(
+        mode="answer_detailed",
+        collection="legacy",
+        retrieve_kwargs={"local_only": True},
+        answer_kwargs={"local_only": True},
+    )
+    legacy_res = asyncio.run(legacy_adapter.execute(EvaluationCase(id="leg-1", input="hello")))
+    assert legacy_res.errors == []
+    assert legacy_res.output == "legacy-ok"

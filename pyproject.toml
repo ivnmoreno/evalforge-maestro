@@ -47,7 +47,7 @@ Issues = "https://github.com/ivnmoreno/evalforge-maestro/issues"
 
 [project.optional-dependencies]
 docpipe = [
-    "docpipe-maestro>=0.2",
+    "docpipe-maestro>=0.4.1",
 ]
 judges = [
     "litellm>=1.84.0",

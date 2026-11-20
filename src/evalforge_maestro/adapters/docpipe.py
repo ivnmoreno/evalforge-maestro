@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -17,6 +18,14 @@ from evalforge_maestro.adapters._shared import (
 )
 from evalforge_maestro.exceptions import AdapterError, MissingExtraError
 from evalforge_maestro.types import EvaluationCase, ExecutionResult, RetrievedChunk, TokenUsage
+
+
+def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD or p.name == name for p in params)
 
 
 def _read_attr_or_key(obj: Any, key: str, default: Any = None) -> Any:
@@ -151,6 +160,10 @@ class DocpipeAdapter:
             self._build_prompt_fn,
         ) = _resolve_docpipe_functions(client=client, mode=mode)
 
+        self._owns_global_docpipe = client is None or getattr(
+            self._retrieve_fn, "__module__", ""
+        ).startswith("docpipe_maestro")
+
         self._mode = mode
         self._system_version = system_version
         self._model_id = model_id
@@ -201,7 +214,14 @@ class DocpipeAdapter:
 
         try:
             query = _extract_query(case.input)
-            raw_sections = await invoke_function(self._retrieve_fn, query, **self._retrieve_kwargs)
+            ret_opts = dict(self._retrieve_kwargs)
+            if (
+                self._owns_global_docpipe
+                and "local_only" in ret_opts
+                and not _accepts_kwarg(self._retrieve_fn, "local_only")
+            ):
+                ret_opts.pop("local_only")
+            raw_sections = await invoke_function(self._retrieve_fn, query, **ret_opts)
             chunks = _normalize_docpipe_chunks(raw_sections)
 
             if self._mode == "answer_detailed" and self._answer_fn is not None:
@@ -213,6 +233,12 @@ class DocpipeAdapter:
                     prompt_payload = query
 
                 ans_opts = dict(self._answer_kwargs)
+                if (
+                    self._owns_global_docpipe
+                    and "local_only" in ans_opts
+                    and not _accepts_kwarg(self._answer_fn, "local_only")
+                ):
+                    ans_opts.pop("local_only")
                 ans_opts.setdefault("has_context", bool(raw_sections))
                 gen = await invoke_function(self._answer_fn, prompt_payload, **ans_opts)
 

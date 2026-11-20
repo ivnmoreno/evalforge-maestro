@@ -73,7 +73,13 @@ class _TomlTargetSection(_TomlStrictSection):
     rag_extractors: dict[str, str] | None = None
     docpipe_mode: str | None = None
     docpipe_collection: str | None = None
+    docpipe_persist_dir: str | None = None
     docpipe_top_k: int | None = None
+    docpipe_embed_model: str | None = None
+    docpipe_answer_model: str | None = None
+    docpipe_api_base: str | None = None
+    docpipe_searcher: str | None = None
+    docpipe_rerank: bool | None = None
 
 
 class _TomlJudgeSection(_TomlStrictSection):
@@ -565,12 +571,52 @@ def _resolve_target_section(
         env_var="EVALFORGE_DOCPIPE_COLLECTION",
         toml_val=target_sec.docpipe_collection,
     )
+    docpipe_persist_dir = lookup.resolve(
+        "target.docpipe_persist_dir",
+        cli_key="docpipe_persist_dir",
+        env_var="EVALFORGE_DOCPIPE_PERSIST_DIR",
+        toml_val=target_sec.docpipe_persist_dir,
+    )
     docpipe_top_k = lookup.resolve(
         "target.docpipe_top_k",
         cli_key="docpipe_top_k",
         env_var="EVALFORGE_DOCPIPE_TOP_K",
         env_parser="int",
         toml_val=target_sec.docpipe_top_k,
+    )
+    docpipe_embed_model = lookup.resolve(
+        "target.docpipe_embed_model",
+        cli_key="docpipe_embed_model",
+        env_var="EVALFORGE_DOCPIPE_EMBED_MODEL",
+        toml_val=target_sec.docpipe_embed_model,
+    )
+    docpipe_answer_model = lookup.resolve(
+        "target.docpipe_answer_model",
+        cli_key="docpipe_answer_model",
+        env_var="EVALFORGE_DOCPIPE_ANSWER_MODEL",
+        toml_val=target_sec.docpipe_answer_model,
+    )
+    docpipe_api_base = lookup.resolve(
+        "target.docpipe_api_base",
+        cli_key="docpipe_api_base",
+        env_var="EVALFORGE_DOCPIPE_API_BASE",
+        toml_val=target_sec.docpipe_api_base,
+    )
+    docpipe_searcher = lookup.resolve(
+        "target.docpipe_searcher",
+        cli_key="docpipe_searcher",
+        env_var="EVALFORGE_DOCPIPE_SEARCHER",
+        toml_val=target_sec.docpipe_searcher,
+    )
+    docpipe_rerank = bool(
+        lookup.resolve(
+            "target.docpipe_rerank",
+            cli_key="docpipe_rerank",
+            env_var="EVALFORGE_DOCPIPE_RERANK",
+            env_parser="bool",
+            toml_val=target_sec.docpipe_rerank,
+            default=False,
+        )
     )
     if target_type_raw is None and executions_path is not None and not target_entrypoint:
         target_type_raw = TargetType.REPLAY.value
@@ -584,7 +630,13 @@ def _resolve_target_section(
         rag_extractors=dict(target_sec.rag_extractors or {}),
         docpipe_mode=docpipe_mode,
         docpipe_collection=docpipe_collection,
+        docpipe_persist_dir=docpipe_persist_dir,
         docpipe_top_k=docpipe_top_k,
+        docpipe_embed_model=docpipe_embed_model,
+        docpipe_answer_model=docpipe_answer_model,
+        docpipe_api_base=docpipe_api_base,
+        docpipe_searcher=docpipe_searcher,
+        docpipe_rerank=docpipe_rerank,
     )
 
 
@@ -921,41 +973,41 @@ def resolve_cli_config(
         default=False,
     )
 
-    target_cfg = _resolve_target_section(
-        lookup,
-        target_sec,
-        executions_path=str(executions_path) if executions_path is not None else None,
-    )
-    resolved_metrics = _resolve_metrics_specs(
-        lookup,
-        cli_map=cli_map,
-        os_env=os_env,
-        env_file_vars=env_file_vars,
-        toml_metrics_tbl=toml_model.metrics,
-    )
-    exec_cfg = _resolve_execution_section(lookup, run_sec)
-    judge_cfg, sec_cfg, raw_key_str = _resolve_judge_and_security(
-        lookup, judge_sec, sec_sec, exec_seed=exec_cfg.seed
-    )
-    gate_cfg = _resolve_gate_section(lookup, gate_sec)
-
-    log_level = lookup.resolve(
-        "logging.log_level",
-        cli_key="log_level",
-        env_var="EVALFORGE_LOG_LEVEL",
-        toml_val=log_sec.log_level,
-        default="WARNING",
-    )
-    log_json = lookup.resolve(
-        "logging.log_json",
-        cli_key="log_json",
-        env_var="EVALFORGE_LOG_JSON",
-        env_parser="bool",
-        toml_val=log_sec.log_json,
-        default=False,
-    )
-
     try:
+        target_cfg = _resolve_target_section(
+            lookup,
+            target_sec,
+            executions_path=str(executions_path) if executions_path is not None else None,
+        )
+        resolved_metrics = _resolve_metrics_specs(
+            lookup,
+            cli_map=cli_map,
+            os_env=os_env,
+            env_file_vars=env_file_vars,
+            toml_metrics_tbl=toml_model.metrics,
+        )
+        exec_cfg = _resolve_execution_section(lookup, run_sec)
+        judge_cfg, sec_cfg, raw_key_str = _resolve_judge_and_security(
+            lookup, judge_sec, sec_sec, exec_seed=exec_cfg.seed
+        )
+        gate_cfg = _resolve_gate_section(lookup, gate_sec)
+
+        log_level = lookup.resolve(
+            "logging.log_level",
+            cli_key="log_level",
+            env_var="EVALFORGE_LOG_LEVEL",
+            toml_val=log_sec.log_level,
+            default="WARNING",
+        )
+        log_json = lookup.resolve(
+            "logging.log_json",
+            cli_key="log_json",
+            env_var="EVALFORGE_LOG_JSON",
+            env_parser="bool",
+            toml_val=log_sec.log_json,
+            default=False,
+        )
+
         resolved = CLIResolvedConfig(
             config_path=resolved_cfg_str,
             env_file_path=resolved_env_str,
@@ -980,6 +1032,8 @@ def resolve_cli_config(
             ),
             provenance=lookup.provenance,
         )
+    except ConfigurationError:
+        raise
     except (ValidationError, ValueError) as exc:
         raise ConfigurationError(
             f"Resolved configuration failed validation: {scrub_secret_text(str(exc))}"

@@ -156,3 +156,46 @@ def test_parse_metric_spec_and_env_errors(tmp_path: Path) -> None:
         resolve_cli_config(cwd=tmp_path, environ={"EVALFORGE_MAX_CONCURRENCY": "abc"})
     with pytest.raises(ConfigurationError, match="EVALFORGE_STRICT"):
         resolve_cli_config(cwd=tmp_path, environ={"EVALFORGE_STRICT": "maybe"})
+
+
+def test_docpipe_target_config_precedence_and_validation(tmp_path: Path) -> None:
+    (tmp_path / "evalforge.toml").write_text(
+        "[target]\n"
+        'type = "docpipe"\n'
+        'docpipe_mode = "answer_detailed"\n'
+        'docpipe_collection = "toml-col"\n'
+        'docpipe_persist_dir = "./toml-store"\n'
+        "docpipe_top_k = 4\n"
+        'docpipe_embed_model = "ollama/nomic-embed-text"\n'
+        'docpipe_answer_model = "ollama/llama3.2"\n'
+        'docpipe_searcher = "default"\n'
+        "docpipe_rerank = false\n",
+        encoding="utf-8",
+    )
+    resolved, _, warnings = resolve_cli_config(
+        cli_overrides={
+            "docpipe_answer_model": "ollama_chat/qwen2.5:1.5b-instruct",
+            "docpipe_rerank": True,
+        },
+        cwd=tmp_path,
+        environ={
+            "EVALFORGE_DOCPIPE_SEARCHER": "fts5_hybrid",
+            "EVALFORGE_DOCPIPE_API_BASE": "http://127.0.0.1:11434",
+        },
+    )
+    assert warnings == []
+    t = resolved.target
+    assert t.docpipe_collection == "toml-col"
+    assert t.docpipe_persist_dir == "./toml-store"
+    assert t.docpipe_top_k == 4
+    assert t.docpipe_embed_model == "ollama/nomic-embed-text"
+    assert t.docpipe_answer_model == "ollama_chat/qwen2.5:1.5b-instruct"
+    assert t.docpipe_api_base == "http://127.0.0.1:11434"
+    assert t.docpipe_searcher == "fts5_hybrid"
+    assert t.docpipe_rerank is True
+
+    with pytest.raises(ConfigurationError, match="docpipe_api_base"):
+        resolve_cli_config(
+            cwd=tmp_path,
+            environ={"EVALFORGE_DOCPIPE_API_BASE": "ftp://invalid.example.com"},
+        )
