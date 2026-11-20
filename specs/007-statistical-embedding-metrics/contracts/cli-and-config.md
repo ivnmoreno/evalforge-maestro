@@ -23,6 +23,7 @@ New flags:
 - `--embedding-aggregation {max,mean}` (`EVALFORGE_EMBEDDING_AGGREGATION`, `[embedding].aggregation`)
 - `--embedding-max-retries INT` (`EVALFORGE_EMBEDDING_MAX_RETRIES`, `[embedding].max_retries`)
 - `--embedding-timeout FLOAT` (`EVALFORGE_EMBEDDING_TIMEOUT`, `[embedding].timeout_seconds`)
+- `--embedding-max-input-chars INT` (`EVALFORGE_EMBEDDING_MAX_INPUT_CHARS`, `[embedding].max_input_chars`, defaults cleanly to `execution.max_context_chars` if omitted or `None`)
 - `--repeats INT` (`EVALFORGE_REPEATS`, `[run].repeats`, `>= 1`, default `1`):
   - When `--repeats == 1`: single run, byte-identical to existing behavior.
   - When `--repeats N` (`N >= 2`):
@@ -37,9 +38,10 @@ New flags:
 
 ### 2.2 `evalforge-maestro compare`
 - Backward-compatible positional signature updated safely:
-  `evalforge-maestro compare <CANDIDATE_RUN_ID> [<CANDIDATE_RUN_ID> ...] --baseline <REF> [--baseline-run <REF> ...]`
-- Single candidate + single `--baseline`: calls `compare_runs(...)` directly (identically preserving existing output structure + populated `MetricComparison.statistics`).
-- Multiple candidates and/or multiple baselines: resolves every run ID or pinned baseline alias and calls `compare_run_cohorts(...)`.
+  `evalforge-maestro compare <CANDIDATE_RUN_ID> [<CANDIDATE_RUN_ID> ...] (--baseline <REF> | --baseline-run <REF> ...)`
+- Resolves `baseline_refs = ([resolved.baseline] if resolved.baseline else []) + list(resolved.baseline_runs)` (requiring `>= 1` baseline reference, so `--baseline-run` works cleanly even without singular `--baseline`).
+- Single candidate + single baseline: calls `compare_runs(...)` directly (identically preserving existing output structure + populated `MetricComparison.statistics`).
+- Multiple candidates and/or multiple baselines: resolves every run ID or pinned baseline alias and calls `compare_run_cohorts(...)` + `QualityGate.evaluate_cohort(...)`.
 - Accepts `--confidence-level`, `--min-statistical-samples`, `--fail-on-significant-regression`, `--strict`, `--min-score`, `--max-regression-drop`.
 
 ### 2.3 POSIX Exit Codes (`0`–`4`)

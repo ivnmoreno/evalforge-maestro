@@ -62,6 +62,8 @@ specs/007-statistical-embedding-metrics/
 ```text
 pyproject.toml                           # Add [project.optional-dependencies].embeddings
 .github/workflows/ci.yml                 # Add optional-embeddings-compat job & minimal-core checks
+README.md                                # Document [embeddings] install, --repeats, statistical compare
+docs/future-features.md                  # Sync completed M6/pre-M6 markers & Feature 007 status
 examples/ci/                             # Preserve existing templates; verify compatibility
 src/evalforge_maestro/
 ├── __init__.py                          # Export new M7/007 public types, metrics & cohort compare

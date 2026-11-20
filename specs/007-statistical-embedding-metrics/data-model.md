@@ -20,6 +20,7 @@ Secret-free, canonical configuration matching `JudgeConfig` conventions:
 - `max_retries: int = Field(default=2, ge=0, le=10)`
 - `retry_backoff_seconds: float = Field(default=0.5, ge=0.0, le=60.0)`
 - `timeout_seconds: float = Field(default=30.0, gt=0.0, le=600.0)`
+- `max_input_chars: int | None = Field(default=None, gt=0)` (bounds pre-provider input text length deterministically via truncation when set)
 - `local_only: bool = False`
 - `mock_mode: bool = False`
 - `extra_params: dict[str, Any] = Field(default_factory=dict)` (JSON-serializable, scrubbed via `redact_secrets`)
@@ -37,6 +38,7 @@ Matches `ResolvedJudgeSettings` pattern (never holds raw `api_key`):
 - `max_retries: int = 2`
 - `retry_backoff_seconds: float = 0.5`
 - `timeout_seconds: float = 30.0`
+- `max_input_chars: int | None = None`
 - `mock_mode: bool = False`
 - `local_only: bool = False`
 
@@ -59,7 +61,7 @@ Matches `ResolvedJudgeSettings` pattern (never holds raw `api_key`):
 Immutable inferential statistics payload attached to `MetricComparison`:
 - `method: StatisticalMethod`
 - `confidence_level: float = Field(default=0.95, gt=0.0, lt=1.0)`
-- `sample_size: int = Field(ge=0)` (number of paired observations for `paired_t_case`, or `min(K, M)` / repeated `N` summary count, documented clearly)
+- `sample_size: int = Field(ge=0)` (number of aligned pairs for `paired_t_case`, `min(baseline_sample_size, candidate_sample_size)` for `welch_t_run`, and repeated cohort count `max(baseline_sample_size, candidate_sample_size)` for `one_sample_t_run`)
 - `baseline_sample_size: int = Field(ge=0)`
 - `candidate_sample_size: int = Field(ge=0)`
 - `excluded_pair_count: int = Field(default=0, ge=0)`

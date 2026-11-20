@@ -37,8 +37,9 @@
 ### R3 — Deterministic `--mock` Vector Construction & Cosine Clamping
 
 - **Decision**:
-  - `generate_mock_embedding(text: str, *, dim: int = 64)` produces a deterministic `float64` unit vector using normalized word tokens (weight `1.0`) and lowercase alphanumeric character trigrams (weight `0.5`) mapped via signed `hashlib.sha256` bucket hashing (`idx = digest % dim`, sign `±1`) into a `dim=64` array followed by L2 normalization.
-  - Whitespace-only or empty text produces an explicit zero-vector handled predictably: empty/absent `reference` (`embedding_similarity`) or empty `retrieved_chunks` (`context_embedding_similarity`) returns `MetricStatus.NOT_APPLICABLE` (`score=None`); blank target `output` returns `score=0.0` (`FAIL` when threshold `> 0`), matching deterministic RAG/text semantics.
+  - `generate_mock_embedding(text: str, *, dim: int = 64)` produces a deterministic `float64` unit vector using normalized word tokens (weight `1.0`) and lowercase alphanumeric character trigrams (weight `0.5`) mapped via signed `hashlib.sha256` bucket hashing (`idx = digest % dim`, sign `±1`) into a `dim=64` array followed by L2 normalization; if a non-blank string (such as `"!!!"`) contains zero alphanumeric tokens/trigrams, it falls back to hashing the stripped raw string so non-blank inputs yield deterministic unit vectors (`0.0` against orthogonal text) while only genuinely zero-norm live/custom provider vectors mark `INCONCLUSIVE`.
+  - Pre-provider input truncation (`text[:max_input_chars]` when configured) bounds oversize payloads prior to external embedding requests.
+  - Whitespace-only or empty `reference` (`embedding_similarity`) or empty `retrieved_chunks` (`context_embedding_similarity`) returns `MetricStatus.NOT_APPLICABLE` (`score=None`); blank target `output` returns `score=0.0` (`FAIL` when threshold `> 0`), matching deterministic RAG/text semantics.
   - Similarity score for vector pair $(u, v)$ is $\max(0.0, \text{round\_score}(\cos(u, v)))$ clamped strictly to $[0.0, 1.0]$. Non-finite elements (`NaN`/`Inf`), zero norms from a live/custom provider, or mismatched dimensions yield `MetricStatus.INCONCLUSIVE` (`score=None`) cleanly per case.
 - **Rationale**:
   - Never relies on Python's per-process randomized `hash()`, preserving `@pytest.mark.gate_determinism` bit-for-bit across runs, OSes, and Python versions.

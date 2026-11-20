@@ -50,7 +50,7 @@ Both classes satisfy `Metric` (`evaluate(case, execution)`) and `AsyncBatchMetri
   2. `execution.errors` non-empty -> `status = INCONCLUSIVE`, `score = None`, `explanation = scrub_secret_text(...)`.
   3. `case.reference is None` or blank (`not case.reference.strip()`) -> `status = NOT_APPLICABLE`, `score = None`.
   4. `execution.output is None` or blank (`not execution.output.strip()`) -> `status = FAIL` (`score = 0.0` if `threshold > 0`, else `PASS`), without unnecessary remote embedding call.
-  5. Zero-norm / `NaN` / `Inf` / mismatched vector dimension / failed retries -> `status = INCONCLUSIVE`, `score = None`.
+  5. Zero-norm / `NaN` / `Inf` / mismatched vector dimension / failed retries -> `status = INCONCLUSIVE`, `score = None`. (Under `--mock`, non-blank punctuation-only text hashes the stripped raw string so non-empty strings get deterministic unit vectors rather than spurious zero-norm; live/custom providers returning zero-norm vectors trigger `INCONCLUSIVE`.) Pre-provider input truncation (`text[:config.max_input_chars]`) applies deterministically when `config.max_input_chars` is set.
   6. Clamped score: `score = round_score(max(0.0, min(1.0, cos_sim)))`. `status = PASS` iff `score + FLOAT_EPSILON >= threshold`, else `FAIL`. Threshold resolves as `case.criteria.metric_thresholds.get(metric_id, case.criteria.pass_threshold or config.pass_threshold)`.
   7. Strict config isolation: `[embedding]` settings (`EmbeddingConfig`) remain completely separate from `[judge]` settings (`JudgeConfig`) and default `model` to `"mock-embedding"` when `mock_mode=True`.
 
@@ -85,10 +85,10 @@ Both classes satisfy `Metric` (`evaluate(case, execution)`) and `AsyncBatchMetri
 - Delegates to `compare_runs` when `len(baseline_runs) == 1 and len(candidate_runs) == 1`, setting `cohort = None`.
 - When `max(len(baseline_runs), len(candidate_runs)) >= 2`:
   - Sets `RunComparisonReport.cohort = RunCohortSummary(...)`.
-  - Uses `baseline_runs[-1]` and `candidate_runs[-1]` as representative `baseline_run_id` and `candidate_run_id`.
+  - Uses `baseline_runs[-1]` and `candidate_runs[-1]` as representative `baseline_run_id` and `candidate_run_id` (`build_pooled_cohort_run(runs)` likewise preserves `run_id = runs[-1].run_id` so `QualityGate.evaluate` and cohort assertions align cleanly).
   - Computes pooled run-level mean scores, baseline/candidate SDs, and `MetricComparison.statistics`:
-    - `welch_t_run` if both cohorts have `>= 2` valid run means for the metric (`insufficient_data` if total runs below `policy.min_statistical_samples`).
-    - `one_sample_t_run` if one side has `1` run and the other has `>= 2` valid run means.
+    - `welch_t_run` if both cohorts have `>= 2` valid run means for the metric (`insufficient_data` if `min(baseline_count, candidate_count) < policy.min_statistical_samples`, setting `sample_size = min(baseline_count, candidate_count)`).
+    - `one_sample_t_run` if one side has `1` run and the other has `>= 2` valid run means (`insufficient_data` if the repeated cohort count `< policy.min_statistical_samples`, setting `sample_size = repeated_count`).
     - `paired_t_case` fallback if neither side has `>= 2` run means for that metric.
   - Populates `MetricComparison.case_statistics` with `paired_t_case` computed over aligned per-case cohort means across trials!
   - Runs `detect_cohort_drift` verifying intra-cohort and cross-cohort consistency (`dataset_fingerprint`, `metric_version`, `judge_config_fingerprint`, `embedding_config_fingerprint`).
@@ -96,8 +96,9 @@ Both classes satisfy `Metric` (`evaluate(case, execution)`) and `AsyncBatchMetri
 ### 3.3 `QualityGate.evaluate(...)` and `QualityGate.evaluate_cohort(...)`
 - `QualityGate.evaluate(run, *, comparison=None, trend=None)` retains its exact signature pinned in `tests/test_api_stability.py`.
 - `QualityGate.evaluate_cohort(runs, *, comparison=None, trend=None) -> QualityGateResult` evaluates repeated trial cohorts (`run --repeats N` and multi-candidate `compare`):
+  - Validates `runs` is non-empty (`ConfigurationError`) and, when `comparison` has `cohort` set, validates `comparison.cohort.candidate_run_ids == [r.run_id for r in runs]` and `comparison.candidate_run_id == runs[-1].run_id`.
   - Fails `"mandatory_cases"` if **any** run in `runs` contains a mandatory failure (`has_mandatory_failures == True`), collecting all failed case IDs cleanly.
-  - Pools metric scores and inconclusive rates across all `N` repeats in `runs` via `build_pooled_cohort_run(runs)` so `"metric_floor:*"` and `"inconclusive_rate"` evaluate against the candidate cohort's pooled averages.
+  - Pools metric scores and inconclusive rates across all `N` repeats in `runs` via `build_pooled_cohort_run(runs)` (`run_id = runs[-1].run_id`) so `"metric_floor:*"` and `"inconclusive_rate"` evaluate against the candidate cohort's pooled averages.
 - Inside both `evaluate` and `evaluate_cohort`, statistical comparison checks evaluate `mc.statistics.significance == SignificanceStatus.SIGNIFICANT_REGRESSION` across `comparison.metric_comparisons`:
   - Any statistically significant negative shift (`ci_high < 0`, `p < alpha`, regardless of drop magnitude relative to `max_regression_drop`) emits rule `"statistical_regression:<metric_id>"` with `GateDecision.FAIL` if `policy.fail_on_significant_regression` else `GateDecision.WARNING` (escalating to exit code `1` under CLI `--strict`).
   - When no significant regressions occur across statistically comparable metrics, emits `"statistical_significance"` (`GateDecision.PASS`).

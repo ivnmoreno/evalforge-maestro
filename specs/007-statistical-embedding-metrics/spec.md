@@ -71,11 +71,11 @@ As a CI operator releasing prompt or model changes, I want ergonomic CLI and con
 
 ### Edge Cases
 
-- What happens when embedding texts exceed context or token limits or contain only whitespace/punctuation? Empty target outputs or empty references follow deterministic zero-division/missing-reference safety (`NOT_APPLICABLE` for missing ground truth, bounded `0.0` or explicit status on blank output); provider truncation or oversize inputs are bounded by configured resource limits without crashing the batch.
+- What happens when embedding texts exceed context or token limits or contain only whitespace/punctuation? Empty/whitespace references return `NOT_APPLICABLE`, blank or punctuation-only target outputs follow deterministic bounded `0.0` (`FAIL` when threshold > 0, via whole-text hash fallback under `--mock` so live vs mock never diverge spuriously), and configured character limits bound oversize inputs prior to external embedding requests without crashing the batch.
 - What happens when an embedding provider returns vectors with zero norm (`[0, 0, ...]`), mismatched dimensions between reference and candidate vectors, or `NaN`/`Inf` values? The metric catches invalid vector math explicitly and marks the case `INCONCLUSIVE` with diagnostic error context rather than leaking `NaN`/`Inf` or crashing other cases.
 - What happens when two runs compared statistically do not share identical case IDs (added/removed dataset cases) or have mixed `NOT_APPLICABLE` / `INCONCLUSIVE` scores on some cases? Paired statistical tests compute solely over valid aligned case pairs while clearly reporting excluded/missing pair counts and falling back cleanly when unpaired or under-powered.
 - What happens when baseline runs and candidate runs inside a multi-run comparison differ in `dataset_fingerprint` or `metric_version`? Cross-version provenance drift detection surfaces explicit drift warnings so incomparable distributions are never silently pooled together.
-- What happens when all paired deltas are identically zero (`std = 0`, `delta = 0`)? Zero variance produces deterministic zero-width confidence interval `[0.0, 0.0]` classified as not significant (`no_change`), never dividing by zero.
+- What happens when all paired deltas are identically zero (`std = 0`, `delta = 0`)? Zero variance produces deterministic zero-width confidence interval `[0.0, 0.0]` classified as `not_significant`, never dividing by zero.
 
 ## Requirements *(mandatory)*
 
@@ -108,6 +108,6 @@ As a CI operator releasing prompt or model changes, I want ergonomic CLI and con
 
 ## Assumptions
 
-- Statistical inference (confidence intervals and significance testing) relies on deterministic paired-sample and/or deterministic seeded resampling methods that require no external heavy scientific runtime dependencies in core installation.
+- Statistical inference (confidence intervals and significance testing) relies on deterministic analytical paired-sample, unequal-variance Welch's, and one-sample Student's *t* methods that require no external heavy scientific runtime dependencies in core installation.
 - Target systems remain outside evaluation control: embedding similarity compares already-captured target outputs, references, and retrieved contexts rather than building document retrieval indexes or chunk stores.
 - Historical run records without statistical summary fields remain readable as valid runs and participate in pairwise comparisons cleanly.
