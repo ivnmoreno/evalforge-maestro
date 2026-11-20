@@ -43,6 +43,16 @@ _ANSWER_SURFACE_METRIC_IDS = frozenset(
     }
 )
 _ANSWER_OR_GROUNDING_METRIC_IDS = _ANSWER_SURFACE_METRIC_IDS | frozenset({"groundedness"})
+_AGENT_TRACE_METRIC_IDS = frozenset(
+    {
+        "tool_selection",
+        "argument_correctness",
+        "execution_sequence",
+        "tool_efficiency",
+        "policy_compliance",
+        "failure_recovery",
+    }
+)
 
 
 def _scrub_json_tree(value: Any) -> Any:
@@ -140,6 +150,68 @@ def detect_decoupled_evidence(run: RunRecord) -> list[DecoupledEvidenceDiagnosti
                     ),
                 )
             )
+
+        agent_pass = [
+            m_id
+            for m_id, res in case.metrics.items()
+            if m_id in _AGENT_TRACE_METRIC_IDS and res.status == MetricStatus.PASS
+        ]
+        agent_fail = [
+            m_id
+            for m_id, res in case.metrics.items()
+            if m_id in _AGENT_TRACE_METRIC_IDS and res.status == MetricStatus.FAIL
+        ]
+        if agent_pass or agent_fail:
+            raw_tools: list[str] = []
+            seen_tools: set[str] = set()
+            for tc in case.execution.tool_calls:
+                if tc.name not in seen_tools:
+                    seen_tools.add(tc.name)
+                    raw_tools.append(tc.name)
+            for step in case.execution.trace:
+                for nested in step.tool_calls:
+                    if nested.name not in seen_tools:
+                        seen_tools.add(nested.name)
+                        raw_tools.append(nested.name)
+                if step.name and step.name not in seen_tools and not step.tool_calls:
+                    seen_tools.add(step.name)
+                    raw_tools.append(step.name)
+            tool_note = f" tools=[{', '.join(raw_tools[:6])}]" if raw_tools else ""
+
+            if answer_pass and agent_fail:
+                passed_list = ", ".join(sorted(answer_pass))
+                failed_list = ", ".join(sorted(agent_fail))
+                diagnostics.append(
+                    DecoupledEvidenceDiagnostic(
+                        case_id=case.case_id,
+                        mandatory=case.mandatory,
+                        category=EvidenceDecouplingCategory.ANSWER_PASSED_AGENT_TRACE_FAILED,
+                        passed_metrics=sorted(answer_pass),
+                        failed_metrics=sorted(agent_fail),
+                        retrieved_chunk_ids=chunk_ids,
+                        explanation=(
+                            f"Case {case.case_id!r} passed answer ({passed_list}) "
+                            f"while agent trace failed ({failed_list};{tool_note})."
+                        ),
+                    )
+                )
+            elif agent_pass and not agent_fail and answer_or_grounding_fail:
+                passed_list = ", ".join(sorted(agent_pass))
+                failed_list = ", ".join(sorted(answer_or_grounding_fail))
+                diagnostics.append(
+                    DecoupledEvidenceDiagnostic(
+                        case_id=case.case_id,
+                        mandatory=case.mandatory,
+                        category=EvidenceDecouplingCategory.AGENT_TRACE_PASSED_ANSWER_FAILED,
+                        passed_metrics=sorted(agent_pass),
+                        failed_metrics=sorted(answer_or_grounding_fail),
+                        retrieved_chunk_ids=chunk_ids,
+                        explanation=(
+                            f"Case {case.case_id!r} passed agent trace ({passed_list};"
+                            f"{tool_note}) while answer failed ({failed_list})."
+                        ),
+                    )
+                )
     return diagnostics
 
 

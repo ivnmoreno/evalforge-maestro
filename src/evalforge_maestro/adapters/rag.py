@@ -10,6 +10,7 @@ from evalforge_maestro._canonical import redact_secrets, round_score
 from evalforge_maestro.adapters._shared import (
     build_target_arg,
     build_validated_execution_result,
+    extract_adapter_field,
     invoke_callable,
     normalize_token_usage,
     redact_adapter_config,
@@ -24,51 +25,7 @@ from evalforge_maestro.types import (
     TokenUsage,
 )
 
-_MISSING = object()
-
-
-def _resolve_dotted_path(payload: Any, path: str) -> Any:
-    current = payload
-    for part in path.split("."):
-        if isinstance(current, Mapping):
-            if part not in current:
-                return _MISSING
-            current = current[part]
-        elif hasattr(current, part):
-            current = getattr(current, part)
-        else:
-            return _MISSING
-    return current
-
-
-def _extract_field(
-    payload: Any,
-    rule: str | Callable[[Any], Any] | None,
-    fallbacks: tuple[str, ...],
-    *,
-    required: bool,
-    default: Any = None,
-    field_label: str,
-) -> Any:
-    """Resolve one target field via explicit rule (strict) or fallback lookup paths."""
-    if rule is not None:
-        if callable(rule):
-            return rule(payload)
-        resolved = _resolve_dotted_path(payload, rule)
-        if resolved is _MISSING:
-            raise AdapterError(f"Extractor path {rule!r} for {field_label} was not found")
-        return resolved
-
-    for candidate in fallbacks:
-        resolved = _resolve_dotted_path(payload, candidate)
-        if resolved is not _MISSING:
-            return resolved
-
-    if required:
-        raise AdapterError(
-            f"Missing required RAG field {field_label!r} (tried {', '.join(fallbacks)})"
-        )
-    return default
+_extract_field = extract_adapter_field
 
 
 def _normalize_chunk(

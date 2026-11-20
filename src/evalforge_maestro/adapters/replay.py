@@ -9,9 +9,26 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from evalforge_maestro._canonical import redact_secrets, scrub_secret_text
 from evalforge_maestro.adapters._shared import redact_adapter_config
+from evalforge_maestro.adapters._trace_norm import redact_tool_call_record, redact_trace_step
 from evalforge_maestro.exceptions import AdapterError, DatasetError
 from evalforge_maestro.types import EvaluationCase, ExecutionResult, RunRecord
+
+
+def _sanitize_replay_record(record: ExecutionResult) -> ExecutionResult:
+    updates: dict[str, Any] = {}
+    if record.tool_calls:
+        updates["tool_calls"] = [redact_tool_call_record(c) for c in record.tool_calls]
+    if record.trace:
+        updates["trace"] = [redact_trace_step(s) for s in record.trace]
+    if record.errors:
+        updates["errors"] = [scrub_secret_text(err) for err in record.errors]
+    if record.warnings:
+        updates["warnings"] = [scrub_secret_text(w) for w in record.warnings]
+    if record.adapter_metadata:
+        updates["adapter_metadata"] = redact_secrets(dict(record.adapter_metadata))
+    return record.model_copy(update=updates) if updates else record
 
 
 class ReplayAdapter:
@@ -37,7 +54,7 @@ class ReplayAdapter:
                         f"ReplayAdapter key {key!r} does not match ExecutionResult.case_id "
                         f"{item.case_id!r}"
                     )
-                mapping[key] = item
+                mapping[key] = _sanitize_replay_record(item)
         else:
             for idx, item in enumerate(executions, start=1):
                 if not isinstance(item, ExecutionResult):
@@ -48,7 +65,7 @@ class ReplayAdapter:
                     raise AdapterError(
                         f"Duplicate case_id {item.case_id!r} in ReplayAdapter executions"
                     )
-                mapping[item.case_id] = item
+                mapping[item.case_id] = _sanitize_replay_record(item)
 
         if not mapping:
             raise AdapterError("ReplayAdapter requires at least one captured ExecutionResult")

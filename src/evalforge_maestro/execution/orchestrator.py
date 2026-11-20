@@ -18,6 +18,7 @@ from evalforge_maestro.datasets import DatasetEngine, DatasetStreamResult
 from evalforge_maestro.exceptions import ExecutionError, ImmutabilityError, MemoryLimitExceededError
 from evalforge_maestro.storage import LocalRunStore
 from evalforge_maestro.types import (
+    AgentTraceStep,
     AggregateMetricSummary,
     AsyncBatchMetric,
     CaseEvaluationRecord,
@@ -30,6 +31,7 @@ from evalforge_maestro.types import (
     RetrievedChunk,
     RunRecord,
     TargetAdapter,
+    ToolCallRecord,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,130 @@ def _truncate_text(text: str, max_chars: int) -> tuple[str, bool]:
     if len(text) <= max_chars:
         return text, False
     return text[:max_chars], True
+
+
+def _truncate_json_value(value: Any, max_chars: int) -> tuple[Any, bool]:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value, False
+    if isinstance(value, str):
+        return _truncate_text(value, max_chars)
+    if isinstance(value, dict):
+        return _truncate_mapping(value, max_chars)
+    if isinstance(value, list):
+        trimmed_list: list[Any] = []
+        changed = False
+        for item in value:
+            t_item, did_item = _truncate_json_value(item, max_chars)
+            trimmed_list.append(t_item)
+            changed = changed or did_item
+        serialized = canonical_json_str(trimmed_list)
+        if len(serialized) > max_chars:
+            return serialized[:max_chars], True
+        return trimmed_list, changed
+    serialized = canonical_json_str(value)
+    if len(serialized) > max_chars:
+        return serialized[:max_chars], True
+    return value, False
+
+
+def _truncate_mapping(mapping: dict[str, Any], max_chars: int) -> tuple[dict[str, Any], bool]:
+    if not mapping:
+        return mapping, False
+    trimmed: dict[str, Any] = {}
+    changed = False
+    for key, val in mapping.items():
+        t_val, did_val = _truncate_json_value(val, max_chars)
+        trimmed[key] = t_val
+        changed = changed or did_val
+    return trimmed, changed
+
+
+def _truncate_tool_call_record(call: ToolCallRecord, max_chars: int) -> tuple[ToolCallRecord, bool]:
+    updates: dict[str, Any] = {}
+    changed = False
+
+    new_args, args_changed = _truncate_mapping(call.arguments, max_chars)
+    if args_changed:
+        updates["arguments"] = new_args
+        changed = True
+
+    if call.raw_arguments is not None:
+        new_raw, raw_changed = _truncate_text(call.raw_arguments, max_chars)
+        if raw_changed:
+            updates["raw_arguments"] = new_raw
+            changed = True
+
+    if call.argument_parse_error is not None:
+        new_pe, pe_changed = _truncate_text(call.argument_parse_error, max_chars)
+        if pe_changed:
+            updates["argument_parse_error"] = new_pe
+            changed = True
+
+    if call.error is not None:
+        new_err, err_changed = _truncate_text(call.error, max_chars)
+        if err_changed:
+            updates["error"] = new_err
+            changed = True
+
+    if call.result is not None:
+        new_res, res_changed = _truncate_json_value(call.result, max_chars)
+        if res_changed:
+            updates["result"] = new_res
+            changed = True
+
+    new_meta, meta_changed = _truncate_mapping(call.metadata, max_chars)
+    if meta_changed:
+        updates["metadata"] = new_meta
+        changed = True
+
+    return (call.model_copy(update=updates) if changed else call), changed
+
+
+def _truncate_trace_step(step: AgentTraceStep, max_chars: int) -> tuple[AgentTraceStep, bool]:
+    updates: dict[str, Any] = {}
+    changed = False
+
+    if step.content is not None:
+        new_content, content_changed = _truncate_json_value(step.content, max_chars)
+        if content_changed:
+            updates["content"] = new_content
+            changed = True
+
+    if step.error is not None:
+        new_err, err_changed = _truncate_text(step.error, max_chars)
+        if err_changed:
+            updates["error"] = new_err
+            changed = True
+
+    if step.tool_calls:
+        new_nested: list[ToolCallRecord] = []
+        nested_changed = False
+        for call in step.tool_calls:
+            t_call, did_call = _truncate_tool_call_record(call, max_chars)
+            new_nested.append(t_call)
+            nested_changed = nested_changed or did_call
+        if nested_changed:
+            updates["tool_calls"] = new_nested
+            changed = True
+
+    new_meta, meta_changed = _truncate_mapping(step.metadata, max_chars)
+    if meta_changed:
+        updates["metadata"] = new_meta
+        changed = True
+
+    return (step.model_copy(update=updates) if changed else step), changed
+
+
+def _cap_sequence_budget(items: list[Any], max_chars: int) -> tuple[list[Any], bool]:
+    capped = list(items)
+    changed = False
+    while (
+        len(capped) > 1
+        and len(canonical_json_str([entry.model_dump(mode="json") for entry in capped])) > max_chars
+    ):
+        capped.pop()
+        changed = True
+    return capped, changed
 
 
 def _truncate_execution_result(
@@ -95,6 +221,38 @@ def _truncate_execution_result(
                 new_chunks.append(chunk)
         if chunks_changed:
             updates["retrieved_chunks"] = new_chunks
+
+    if execution.tool_calls:
+        new_calls: list[ToolCallRecord] = []
+        calls_changed = False
+        for call in execution.tool_calls:
+            t_call, did_call = _truncate_tool_call_record(call, max_chars)
+            new_calls.append(t_call)
+            if did_call:
+                calls_changed = True
+                was_truncated = True
+        capped_calls, calls_capped = _cap_sequence_budget(new_calls, max_chars)
+        if calls_capped:
+            calls_changed = True
+            was_truncated = True
+        if calls_changed:
+            updates["tool_calls"] = capped_calls
+
+    if execution.trace:
+        new_steps: list[AgentTraceStep] = []
+        steps_changed = False
+        for step in execution.trace:
+            t_step, did_step = _truncate_trace_step(step, max_chars)
+            new_steps.append(t_step)
+            if did_step:
+                steps_changed = True
+                was_truncated = True
+        capped_steps, steps_capped = _cap_sequence_budget(new_steps, max_chars)
+        if steps_capped:
+            steps_changed = True
+            was_truncated = True
+        if steps_changed:
+            updates["trace"] = capped_steps
 
     if execution.errors:
         new_errors = [err[:max_chars] for err in execution.errors]

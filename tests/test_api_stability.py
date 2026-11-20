@@ -34,6 +34,8 @@ from evalforge_maestro.exceptions import (
     StorageError,
 )
 from evalforge_maestro.types import (
+    AgentExtractorConfig,
+    AgentTraceStep,
     BaselineCommandPayload,
     BaselineEntry,
     BaselineRegistry,
@@ -45,6 +47,7 @@ from evalforge_maestro.types import (
     ConfigValidationPayload,
     DecoupledEvidenceDiagnostic,
     ExpectedContextItem,
+    ExpectedToolCall,
     HumanCalibrationSample,
     JudgeConfig,
     JudgeResponse,
@@ -54,6 +57,7 @@ from evalforge_maestro.types import (
     ReportDiagnosticsSummary,
     ReportDocument,
     RunComparisonReport,
+    ToolCallRecord,
     TrendReport,
 )
 
@@ -67,6 +71,9 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
     expected_top_all = {
         "SCHEMA_VERSION",
         "AdapterError",
+        "AgentAdapter",
+        "AgentExtractorConfig",
+        "AgentTraceStep",
         "AggregateMetricSummary",
         "AnomalyFlag",
         "AnomalyScope",
@@ -74,6 +81,7 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "AnomalyType",
         "AnswerCorrectnessMetric",
         "AnswerRelevanceMetric",
+        "ArgumentCorrectnessMetric",
         "AsyncBatchMetric",
         "BaseJudgeMetric",
         "BaselineCommandPayload",
@@ -115,7 +123,10 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "ExactMatchMetric",
         "ExecutionError",
         "ExecutionResult",
+        "ExecutionSequenceMetric",
         "ExpectedContextItem",
+        "ExpectedToolCall",
+        "FailureRecoveryMetric",
         "GateDecision",
         "GateRuleCheck",
         "GroundednessMetric",
@@ -142,6 +153,7 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "NDCGAtKMetric",
         "NormalizedMatchMetric",
         "OrchestratorConfig",
+        "PolicyComplianceMetric",
         "PrecisionAtKMetric",
         "QualityGate",
         "QualityGatePolicy",
@@ -166,6 +178,11 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "TargetChangeSummary",
         "TargetType",
         "TokenUsage",
+        "ToolCallRecord",
+        "ToolCallStatus",
+        "ToolEfficiencyMetric",
+        "ToolSelectionMetric",
+        "TraceStepKind",
         "TrendDataPoint",
         "TrendDirection",
         "TrendReport",
@@ -174,6 +191,7 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "analyze_trend",
         "answer_correctness",
         "answer_relevance",
+        "argument_correctness",
         "build_calibration_report",
         "build_comparison_report",
         "build_run_report",
@@ -187,17 +205,24 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "detect_drift",
         "detect_pii_categories",
         "exact_match",
+        "execution_sequence",
+        "failure_recovery",
         "groundedness",
         "hit_rate_at_k",
         "json_schema_validation",
         "load_docpipe_fixture",
         "mrr",
         "ndcg_at_k",
+        "normalize_agent_trace",
+        "normalize_tool_calls",
         "normalized_match",
+        "policy_compliance",
         "precision_at_k",
         "recall_at_k",
         "render_markdown",
         "render_report_json",
+        "tool_efficiency",
+        "tool_selection",
         "validate_pii_egress",
     }
     assert set(evalforge_maestro.__all__) == expected_top_all
@@ -225,10 +250,13 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
     }
     assert set(datasets.__all__) == {"DatasetEngine", "DatasetStreamResult", "load_docpipe_fixture"}
     assert set(adapters.__all__) == {
+        "AgentAdapter",
         "CallableAdapter",
         "DocpipeAdapter",
         "RAGAdapter",
         "ReplayAdapter",
+        "normalize_agent_trace",
+        "normalize_tool_calls",
     }
     assert set(reporting.__all__) == {
         "build_calibration_report",
@@ -240,22 +268,34 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "render_report_json",
     }
     assert set(metrics.__all__) == {
+        "ArgumentCorrectnessMetric",
         "ExactMatchMetric",
+        "ExecutionSequenceMetric",
+        "FailureRecoveryMetric",
         "HitRateAtKMetric",
         "JsonSchemaValidationMetric",
         "MRRMetric",
         "NDCGAtKMetric",
         "NormalizedMatchMetric",
+        "PolicyComplianceMetric",
         "PrecisionAtKMetric",
         "RecallAtKMetric",
+        "ToolEfficiencyMetric",
+        "ToolSelectionMetric",
+        "argument_correctness",
         "exact_match",
+        "execution_sequence",
+        "failure_recovery",
         "hit_rate_at_k",
         "json_schema_validation",
         "mrr",
         "ndcg_at_k",
         "normalized_match",
+        "policy_compliance",
         "precision_at_k",
         "recall_at_k",
+        "tool_efficiency",
+        "tool_selection",
     }
     assert set(execution.__all__) == {"EvaluationOrchestrator"}
     assert set(storage.__all__) == {"LocalRunStore"}
@@ -762,4 +802,96 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         "error_type",
         "message",
         "hint",
+    }
+    assert _param_spec(adapters.AgentAdapter.__init__) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("fn", "POSITIONAL_OR_KEYWORD"),
+        ("extractors", "KEYWORD_ONLY"),
+        ("system_version", "KEYWORD_ONLY"),
+        ("model_id", "KEYWORD_ONLY"),
+        ("config", "KEYWORD_ONLY"),
+        ("pass_case", "KEYWORD_ONLY"),
+        ("input_mapper", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(adapters.normalize_agent_trace) == [
+        ("raw", "POSITIONAL_OR_KEYWORD"),
+        ("extractors", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(adapters.normalize_tool_calls) == [
+        ("raw", "POSITIONAL_OR_KEYWORD"),
+        ("extractors", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(metrics.ToolSelectionMetric.__init__) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("mode", "KEYWORD_ONLY"),
+        ("threshold", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(metrics.ArgumentCorrectnessMetric.__init__) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("strict_mode", "KEYWORD_ONLY"),
+        ("threshold", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(metrics.ExecutionSequenceMetric.__init__) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("mode", "KEYWORD_ONLY"),
+        ("threshold", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(metrics.ToolEfficiencyMetric.__init__) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("default_max_steps", "KEYWORD_ONLY"),
+        ("default_max_tool_calls", "KEYWORD_ONLY"),
+        ("allow_redundant_failures", "KEYWORD_ONLY"),
+        ("loop_penalty", "KEYWORD_ONLY"),
+        ("threshold", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(metrics.PolicyComplianceMetric.__init__) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("forbidden_tools", "KEYWORD_ONLY"),
+        ("forbidden_argument_patterns", "KEYWORD_ONLY"),
+        ("threshold", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(metrics.FailureRecoveryMetric.__init__) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("threshold", "KEYWORD_ONLY"),
+    ]
+    assert set(ExpectedToolCall.model_fields) >= {
+        "name",
+        "arguments",
+        "arguments_schema",
+        "argument_match_mode",
+        "optional",
+        "order",
+    }
+    assert set(ToolCallRecord.model_fields) >= {
+        "id",
+        "name",
+        "arguments",
+        "raw_arguments",
+        "argument_parse_error",
+        "result",
+        "status",
+        "error",
+        "step_index",
+        "elapsed_seconds",
+        "metadata",
+    }
+    assert set(AgentTraceStep.model_fields) >= {
+        "step_index",
+        "kind",
+        "name",
+        "content",
+        "tool_calls",
+        "tool_call_id",
+        "status",
+        "error",
+        "elapsed_seconds",
+        "tokens",
+        "metadata",
+    }
+    assert set(AgentExtractorConfig.model_fields) >= {
+        "output",
+        "tool_calls",
+        "trace",
+        "tokens",
+        "errors",
     }

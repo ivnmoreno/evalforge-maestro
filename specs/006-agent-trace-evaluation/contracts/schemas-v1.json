@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EvalForge Maestro M6 Agent Trace Evaluation Schema Extensions (v1.0)",
+  "$comment": "Milestone 6 $defs extending v1.0 contracts with typed ExpectedToolCall, ToolCallRecord, AgentTraceStep, CaseCriteria policy/budget constraints, TargetType='agent', AgentExtractorConfig/agent_extractors, and decoupled agent trace diagnostic categories.",
+  "$defs": {
+    "ToolCallStatus": {
+      "type": "string",
+      "enum": ["success", "error", "timeout", "blocked"]
+    },
+    "TraceStepKind": {
+      "type": "string",
+      "enum": [
+        "user_input",
+        "reasoning",
+        "llm_response",
+        "tool_call",
+        "tool_result",
+        "error",
+        "final_output",
+        "other"
+      ]
+    },
+    "TargetType": {
+      "type": "string",
+      "enum": ["callable", "rag", "docpipe", "replay", "agent"]
+    },
+    "EvidenceDecouplingCategory": {
+      "type": "string",
+      "enum": [
+        "answer_passed_retrieval_or_grounding_failed",
+        "retrieval_passed_answer_or_grounding_failed",
+        "answer_passed_agent_trace_failed",
+        "agent_trace_passed_answer_failed"
+      ]
+    },
+    "ExpectedToolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "arguments": { "type": ["object", "null"], "default": null },
+        "arguments_schema": { "type": ["object", "null"], "default": null },
+        "argument_match_mode": {
+          "type": "string",
+          "enum": ["subset", "exact"],
+          "default": "subset"
+        },
+        "optional": { "type": "boolean", "default": false },
+        "order": { "type": ["integer", "null"], "minimum": 0, "default": null }
+      }
+    },
+    "ToolCallRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "id": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "name": { "type": "string", "minLength": 1 },
+        "arguments": { "type": "object", "default": {} },
+        "raw_arguments": { "type": ["string", "null"], "default": null },
+        "argument_parse_error": { "type": ["string", "null"], "default": null },
+        "result": { "default": null },
+        "status": { "$ref": "#/$defs/ToolCallStatus", "default": "success" },
+        "error": { "type": ["string", "null"], "default": null },
+        "step_index": { "type": ["integer", "null"], "minimum": 0, "default": null },
+        "elapsed_seconds": { "type": ["number", "null"], "minimum": 0.0, "default": null },
+        "metadata": { "type": "object", "default": {} }
+      }
+    },
+    "AgentTraceStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "step_index": { "type": ["integer", "null"], "minimum": 0, "default": null },
+        "kind": { "$ref": "#/$defs/TraceStepKind", "default": "other" },
+        "name": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "content": { "default": null },
+        "tool_calls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolCallRecord" },
+          "default": []
+        },
+        "tool_call_id": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "status": {
+          "anyOf": [{ "$ref": "#/$defs/ToolCallStatus" }, { "type": "null" }],
+          "default": null
+        },
+        "error": { "type": ["string", "null"], "default": null },
+        "elapsed_seconds": { "type": ["number", "null"], "minimum": 0.0, "default": null },
+        "tokens": {
+          "anyOf": [{ "$ref": "#/$defs/TokenUsage" }, { "type": "null" }],
+          "default": null
+        },
+        "metadata": { "type": "object", "default": {} }
+      }
+    },
+    "CaseCriteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mandatory": { "type": "boolean", "default": false },
+        "json_schema": { "type": ["object", "null"], "default": null },
+        "pass_threshold": {
+          "type": ["number", "null"],
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": null
+        },
+        "metric_thresholds": {
+          "type": "object",
+          "additionalProperties": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "default": {}
+        },
+        "forbidden_tools": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "forbidden_argument_patterns": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "max_steps": { "type": ["integer", "null"], "minimum": 1, "default": null },
+        "max_tool_calls": { "type": ["integer", "null"], "minimum": 1, "default": null },
+        "allow_redundant_failures": { "type": "integer", "minimum": 0, "default": 0 }
+      }
+    },
+    "EvaluationCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "input"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "input": {},
+        "reference": { "default": null },
+        "expected_context": { "type": ["array", "null"], "default": null },
+        "expected_tools": {
+          "anyOf": [
+            { "type": "array", "items": { "$ref": "#/$defs/ExpectedToolCall" } },
+            { "type": "null" }
+          ],
+          "default": null
+        },
+        "metadata": { "$ref": "#/$defs/CaseMetadata" },
+        "criteria": { "$ref": "#/$defs/CaseCriteria" }
+      }
+    },
+    "ExecutionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "input", "elapsed_seconds"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0", "default": "1.0" },
+        "case_id": { "type": "string", "minLength": 1 },
+        "input": {},
+        "output": { "default": null },
+        "retrieved_chunks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RetrievedChunk" },
+          "default": []
+        },
+        "trace": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AgentTraceStep" },
+          "default": []
+        },
+        "tool_calls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolCallRecord" },
+          "default": []
+        },
+        "tokens": {
+          "anyOf": [{ "$ref": "#/$defs/TokenUsage" }, { "type": "null" }],
+          "default": null
+        },
+        "elapsed_seconds": { "type": "number", "minimum": 0.0 },
+        "truncated": { "type": "boolean", "default": false },
+        "errors": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "warnings": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "system_version": { "type": ["string", "null"], "default": null },
+        "model_id": { "type": ["string", "null"], "default": null },
+        "config_fingerprint": { "type": ["string", "null"], "default": null },
+        "adapter_metadata": { "type": "object", "default": {} }
+      }
+    },
+    "ResolvedTargetConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target_type": {
+          "anyOf": [{ "$ref": "#/$defs/TargetType" }, { "type": "null" }],
+          "default": null
+        },
+        "entrypoint": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "system_version": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "model_id": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "arg_mode": { "type": "string", "enum": ["input", "case"], "default": "input" },
+        "rag_extractors": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 },
+          "default": {}
+        },
+        "agent_extractors": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 },
+          "default": {}
+        },
+        "docpipe_mode": {
+          "type": "string",
+          "enum": ["answer_detailed", "retrieve"],
+          "default": "answer_detailed"
+        },
+        "docpipe_collection": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "docpipe_persist_dir": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "docpipe_top_k": { "type": ["integer", "null"], "minimum": 1, "default": null },
+        "docpipe_embed_model": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "docpipe_answer_model": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "docpipe_api_base": {
+          "anyOf": [
+            { "type": "string", "pattern": "^https?://[^\\s@?#]+$" },
+            { "type": "null" }
+          ],
+          "default": null
+        },
+        "docpipe_searcher": { "type": ["string", "null"], "minLength": 1, "default": null },
+        "docpipe_rerank": { "type": "boolean", "default": false }
+      }
+    }
+  }
+}

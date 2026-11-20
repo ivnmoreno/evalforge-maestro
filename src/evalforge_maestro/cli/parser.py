@@ -112,7 +112,7 @@ def _add_run_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
     )
     p.add_argument(
         "--target-type",
-        choices=["callable", "rag", "docpipe", "replay"],
+        choices=["callable", "rag", "docpipe", "replay", "agent"],
         default=argparse.SUPPRESS,
         help="Target adapter mode.",
     )
@@ -167,7 +167,10 @@ def _add_run_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
         "--metric",
         action="append",
         default=argparse.SUPPRESS,
-        help="Metric spec (e.g., exact_match, precision_at_k:k=5, groundedness). Repeatable.",
+        help=(
+            "Metric spec (e.g., exact_match, precision_at_k:k=5, groundedness, tool_selection). "
+            "Repeatable."
+        ),
     )
     p.add_argument(
         "--mock",
