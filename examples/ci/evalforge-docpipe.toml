@@ -1,0 +1,43 @@
+# Offline deterministic retrieval CI template for docpipe-maestro>=0.4.1 consumers.
+# Install with: pip install "evalforge-maestro[docpipe]>=0.1.4"
+# Switch docpipe_mode = "answer_detailed" and add text/judge metrics under [metrics]
+# when evaluating full RAG synthesis instead of retrieval-only gating.
+
+[run]
+dataset = "examples/ci/golden-sample.jsonl"
+max_concurrency = 4
+strict = true
+
+[target]
+type = "docpipe"
+docpipe_mode = "retrieve"
+docpipe_collection = "docs"
+docpipe_persist_dir = "./.docpipe/chroma"
+docpipe_top_k = 4
+docpipe_searcher = "fts5_hybrid"
+docpipe_rerank = false
+
+[metrics]
+enabled = ["precision_at_k", "recall_at_k", "mrr"]
+
+[metrics.precision_at_k]
+k = 1
+threshold = 0.5
+
+[metrics.recall_at_k]
+k = 1
+threshold = 0.5
+
+[metrics.mrr]
+threshold = 0.5
+
+[security]
+local_only = true
+block_pii = false
+
+[gate]
+min_score = 0.75
+max_regression_drop = 0.05
+max_inconclusive_rate = 0.05
+fail_on_drift = false
+fail_on_anomaly = false
