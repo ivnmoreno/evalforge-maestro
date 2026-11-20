@@ -3,9 +3,10 @@
 **Feature**: `007-statistical-embedding-metrics`  
 **Contract Scope**: CLI parser (`evalforge-maestro`), `evalforge.toml`, `EVALFORGE_*` environment variables, and POSIX exit codes.
 
-## 1. Precedence & Secret Hygiene
+## 1. Precedence, Isolation & Secret Hygiene
 - Precedence remains strictly:
   `CLI flags > OS environment (EVALFORGE_*) > --env-file > local evalforge.toml > Built-in defaults`.
+- `[embedding]` settings (`--embedding-*`, `EVALFORGE_EMBEDDING_*`, `[embedding]` TOML) remain strictly independent from `[judge]` settings (`--judge-*`, `EVALFORGE_JUDGE_*`, `[judge]` TOML) and never inherit judge models, `api_base`, or `api_key`. Under `--mock` without an explicit model, embedding model defaults to `"mock-embedding"`.
 - Secrets (`[embedding].api_key`, `EVALFORGE_EMBEDDING_API_KEY`) are stripped into `raw_embedding_api_key` strictly inside CLI config loading, replaced by `api_key_configured: bool` in `CLIResolvedConfig.embedding`, and never serialized into logs, JSON stdout, Markdown reports, or `RunRecord`.
 - Plaintext `[embedding].api_key` in `evalforge.toml` emits a config validation warning matching `[judge].api_key`.
 
@@ -25,9 +26,10 @@ New flags:
 - `--repeats INT` (`EVALFORGE_REPEATS`, `[run].repeats`, `>= 1`, default `1`):
   - When `--repeats == 1`: single run, byte-identical to existing behavior.
   - When `--repeats N` (`N >= 2`):
-    - Rejects combining explicit `--run-id X` cleanly by naming repeats `<X>-r01` .. `<X>-rNN` (or auto-generated unique run IDs).
+    - Names repeats `<X>-r01` .. `<X>-rNN` when `--run-id X` is provided (or auto-generates unique immutable `run_id` values), persisting all `N` immutable `RunRecord` artifacts cleanly.
     - If `--seed S` is set, repeat `i` (`0`-based) executes with `seed = S + i` for reproducible stochastic trial variation.
-    - If `--baseline` / `--baseline-run` is present, compares the `N` candidate runs against baseline(s) via `compare_run_cohorts`; otherwise evaluates self/candidate `RunRecord` (`runs[-1]`) alongside `cohort_run_ids`.
+    - Evaluates `QualityGate.evaluate_cohort(runs, ...)` (failing immediately if *any* repeat fails a mandatory case, and evaluating metric score floors and rates against pooled cohort averages across all `N` repeats).
+    - If `--baseline` / `--baseline-run` is present, compares the `N` candidate runs against baseline(s) via `compare_run_cohorts`; attaches `cohort_run_ids` and `cohort_aggregates` cleanly on `ReportDocument` alongside representative `evaluation = runs[-1]`.
 - `--baseline-run REF` (repeatable on `run` and `compare`, additive alongside singular `--baseline`)
 - `--confidence-level FLOAT` (`EVALFORGE_CONFIDENCE_LEVEL`, `[gate].confidence_level`, `0 < x < 1`, default `0.95`)
 - `--min-statistical-samples INT` (`EVALFORGE_MIN_STATISTICAL_SAMPLES`, `[gate].min_statistical_samples`, `>= 2`, default `2`)

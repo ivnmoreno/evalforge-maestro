@@ -19,18 +19,20 @@
   - *Bundling `sentence-transformers` / `torch` in `[embeddings]`*: Rejected due to ~1–2 GB transitive dependencies, slow CI wheels, and the user-confirmed decision to keep `[embeddings]` lightweight with Ollama/remote routing + custom callables + `--mock`.
   - *Putting embedding metrics inside `src/evalforge_maestro/metrics/`*: Rejected because network/provider logic violates `metrics/` purity boundaries and conflicts with the standalone deterministic `100%` coverage gate in `.github/workflows/ci.yml`.
 
-### R2 — Lazy Guard Semantics for `[embeddings]` vs Offline `--mock`
+### R2 — Lazy Guard Semantics, Fail-Fast Check Order & Config Isolation (`[embeddings]` vs `[judge]`)
 
 - **Decision**:
-  - Importing `evalforge_maestro`, importing `EmbeddingSimilarityMetric` / `ContextEmbeddingSimilarityMetric`, constructing `EmbeddingConfig`, or running `evalforge-maestro --help` NEVER imports `numpy` or `litellm`.
-  - Vector normalization and cosine similarity in `embeddings/provider.py` resolve `numpy` lazily via `_resolve_numpy()`, raising `MissingExtraError(extra="embeddings", package="numpy")` (`pip install 'evalforge-maestro[embeddings]'`) if `numpy` is not installed.
+  - Importing `evalforge_maestro`, importing `EmbeddingSimilarityMetric` / `ContextEmbeddingSimilarityMetric`, constructing `EmbeddingConfig` or metric instances, or running `evalforge-maestro --help` NEVER imports `numpy` or `litellm`.
+  - When `evaluate`, `aevaluate`, or `aevaluate_batch` is invoked on an embedding metric (and during CLI `preflight_run_security` when any embedding metric is configured), Step 1 invokes `_resolve_numpy()` **before** inspecting `execution.errors`, `NOT_APPLICABLE` missing-ground-truth branches, or `mock_mode=True`. If `numpy` is missing, `MissingExtraError(extra="embeddings", package="numpy")` (`Install with: pip install 'evalforge-maestro[embeddings]'`) raises immediately (CLI exit code `3`).
   - When `mock_mode=True` and `numpy` IS installed (`[embeddings]`), mock evaluation generates deterministic `np.ndarray` feature vectors offline without importing `litellm` or making network calls.
   - When `mock_mode=False` and `embed_fn is None`, live embedding retrieval validates `--local-only` pre-network and lazily imports `litellm`, raising `MissingExtraError(extra="embeddings", package="litellm")` if `litellm` is absent.
+  - `[embedding]` settings (`EmbeddingConfig`, `--embedding-*`, `EVALFORGE_EMBEDDING_*`, `[embedding]` TOML) remain strictly isolated from `[judge]` settings (`JudgeConfig`); in `--mock` mode without an explicit model, `EmbeddingConfig.model` defaults to `"mock-embedding"`.
 - **Rationale**:
-  - Matches `spec.md` (`FR-001`, `SC-001`) and `Constitution Technical Constraints`: vector operations genuinely depend on `[embeddings]`, so executing an embedding metric without `[embeddings]` fails explicitly with installation instructions rather than silently running degraded Python loops, while `--mock` keeps `litellm` unloaded and air-gapped.
-  - Under `uv sync --frozen --extra dev` (where `[embeddings]` is omitted), unit tests verify both the `MissingExtraError` branch directly and vector scoring via injected fake `numpy` module / mock provider, while a dedicated `optional-embeddings-compat` CI job runs live `[embeddings]` tests against real `numpy`.
+  - Directly satisfies Clarifications `Q5`, `FR-001`, and `SC-001`: chat judge models cannot serve as embedding models, and failing fast on missing `[embeddings]` regardless of `--mock` or edge inputs prevents silent false confidence when optional extras are absent.
+  - Under `uv sync --frozen --extra dev` (where `[embeddings]` is omitted), unit tests verify both the fail-fast `MissingExtraError` branch directly and vector scoring via injected fake `numpy` module / mock provider, while a dedicated `optional-embeddings-compat` CI job runs live `[embeddings]` tests against real `numpy`.
 - **Alternatives Considered**:
-  - *Bypassing `numpy` completely in `--mock`*: Rejected because executing an embedding metric in a minimal core install without `[embeddings]` would mask missing-extra errors during offline smoke runs (`SC-001`).
+  - *Returning `NOT_APPLICABLE` or falling back to Python math in `--mock` when `[embeddings]` is missing*: Rejected per Clarification `Q5` and `SC-001`, because it hides missing installation extras until live production runs.
+  - *Inheriting `judge.api_base` / `judge.api_key` into `[embedding]`*: Rejected per Clarification `Q5` to prevent cross-feature credential/model mix-ups.
 
 ### R3 — Deterministic `--mock` Vector Construction & Cosine Clamping
 
@@ -72,9 +74,11 @@
 - **Decision**:
   - Extend `MetricComparison` with optional backward-compatible fields `statistics: StatisticalSummary | None = None` and `case_statistics: StatisticalSummary | None = None`.
   - Extend `RunComparisonReport` with optional `cohort: RunCohortSummary | None = None`, leaving `baseline_run_id`, `candidate_run_id`, and all existing fields intact (`representative` run IDs when comparing cohorts so `QualityGate.evaluate(...)` validates without breaking existing assertions).
-  - Add pure `compare_run_cohorts(baseline_runs, candidate_runs, *, baseline_name=None, policy=None)` alongside `compare_runs(baseline, candidate, ...)` (`tests/test_api_stability.py` preserves `compare_runs` signature and checks `compare_run_cohorts` explicitly).
-  - Add statistical Quality Gate rule in `regression/gate.py` (`100%` branch coverage maintained via `tests/unit/test_quality_gate.py`):
-    - Checks `mc.statistics.significance == SignificanceStatus.SIGNIFICANT_REGRESSION` across comparable metrics (with `fail_on_significant_regression: bool = False`, emitting `WARNING` by default or `FAIL` when enabled, and `PASS` on rule `"statistical_significance"` when no significant regressions occur among statistically evaluated metrics).
+  - Add pure `compare_run_cohorts(baseline_runs, candidate_runs, *, baseline_name=None, policy=None)` alongside `compare_runs(baseline, candidate, ...)` (`tests/test_api_stability.py` keeps `compare_runs` and `QualityGate.evaluate` signatures unchanged).
+  - Add `QualityGate.evaluate_cohort(runs, *, comparison=None, trend=None)` (backed by `build_pooled_cohort_run(runs)`) per Clarification `Q2`: fails `"mandatory_cases"` if *any* run in the candidate repeat cohort fails a mandatory case, and evaluates `"metric_floor:*"` and `"inconclusive_rate"` against pooled candidate cohort means/rates across all `N` repeats.
+  - Extend statistical Quality Gate checks in `regression/gate.py` (`100%` branch coverage maintained via `tests/unit/test_quality_gate.py`): per Clarification `Q1`, any metric whose primary `statistics.significance == SignificanceStatus.SIGNIFICANT_REGRESSION` (`ci_high < 0`, `p < alpha`, regardless of drop size relative to `max_regression_drop`) emits `WARNING` by default and `FAIL` when `policy.fail_on_significant_regression` is enabled (or `--strict` in CLI), while emitting `"statistical_significance"` `PASS` when statistical evidence shows no significant regression.
+  - Extend `drift.py` to detect `DriftCategory.EMBEDDING_CONFIG` mismatches cleanly alongside `judge_config_fingerprint` and intra-/cross-cohort provenance drift (`detect_cohort_drift`).
+  - Extend `reporting/builder.py` per Clarification `Q4` so `embedding_similarity` acts as an answer-quality metric and `context_embedding_similarity` acts as a grounding/context-alignment metric (mirroring `groundedness`) inside decoupled evidence diagnostics.
   - Extend `cli` (`run --repeats N`, `compare cand1 [cand2 ...] --baseline ... [--baseline-run ...]`, `[embedding]` TOML/ENV/CLI precedence) without breaking any existing single-run `compare <id> --baseline <ref>` invocation.
 - **Rationale**:
   - Guarantees `100%` deserialization compatibility with all existing M1–M6 `.evalforge/runs/*.json`, `RunComparisonReport`, and CLI scripts while providing seamless upgrade to statistical & cohort evaluation.

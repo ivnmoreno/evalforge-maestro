@@ -8,8 +8,8 @@
 
 Feature `007` adds two orthogonal Post-M6 capabilities from `docs/future-features.md` while keeping the core install minimal (`pydantic` + `jsonschema`) and cold-start pure:
 
-1. **Lazy `[embeddings]` Similarity Evaluation (`src/evalforge_maestro/embeddings/`)**: Adds `EmbeddingSimilarityMetric` (`output` vs `reference`) and `ContextEmbeddingSimilarityMetric` (`output` vs retrieved chunks via `max`/`mean` aggregation) behind `evalforge-maestro[embeddings]` (`numpy` + `litellm`). Uses clamped cosine similarity `max(0.0, cosine) in [0.0, 1.0]`, deterministic feature-hashed offline `--mock` vectors, shared pre-network `--local-only` / `--block-pii` safety (`_locality.py`), caller-supplied `embed_fn`, and bounded async batching (`AsyncBatchMetric`).
-2. **Pure-Stdlib Statistical Distribution Comparisons & Multi-Run Cohorts (`src/evalforge_maestro/regression/stats.py`, `compare.py`, `gate.py`)**: Enriches single-run `compare_runs` with exact Student's `paired_t_case` confidence intervals, dispersion metrics, p-values, and significance classifications; adds `compare_run_cohorts` (`welch_t_run` / `one_sample_t_run` + per-case cohort pooling + cohort drift detection), `--repeats N` trial execution on `run`, advisory `WARNING` Quality Gate checks (escalatable to `FAIL` via `--strict` or `fail_on_significant_regression`), and Markdown/JSON report rendering.
+1. **Lazy `[embeddings]` Similarity Evaluation (`src/evalforge_maestro/embeddings/`)**: Adds `EmbeddingSimilarityMetric` (`output` vs `reference`) and `ContextEmbeddingSimilarityMetric` (`output` vs retrieved chunks via `max`/`mean` aggregation) behind `evalforge-maestro[embeddings]` (`numpy` + `litellm`). Uses clamped cosine similarity `max(0.0, cosine) in [0.0, 1.0]`, fail-fast `[embeddings]` extra check on metric invocation (even under `--mock` or missing references) while keeping cold imports `numpy`/`litellm`-free, strict `[embedding]` vs `[judge]` config isolation (default `mock-embedding`), deterministic feature-hashed offline `--mock` vectors, shared pre-network `--local-only` / `--block-pii` safety (`_locality.py`), caller-supplied `embed_fn`, and bounded async batching (`AsyncBatchMetric`). Also extends `drift.py` (`DriftCategory.EMBEDDING_CONFIG`) and `reporting/builder.py` (answer vs context-alignment decoupling diagnostics).
+2. **Pure-Stdlib Statistical Distribution Comparisons & Multi-Run Cohorts (`src/evalforge_maestro/regression/stats.py`, `compare.py`, `gate.py`)**: Enriches single-run `compare_runs` with exact Student's `paired_t_case` confidence intervals, dispersion metrics, p-values, and significance classifications; adds `compare_run_cohorts` (`welch_t_run` / `one_sample_t_run` primary + secondary per-case `paired_t_case` + cohort drift detection, default `min_statistical_samples = 2`), `--repeats N` trial execution on `run`, `QualityGate.evaluate_cohort` (any-repeat mandatory failure + pooled cohort metric floor checks), advisory `WARNING` checks on **any** statistically significant drop (`ci_high < 0`, escalatable to `FAIL` via `--strict` or `fail_on_significant_regression`), and Markdown/JSON report rendering.
 
 ## Technical Context
 
@@ -77,9 +77,9 @@ src/evalforge_maestro/
 ├── regression/
 │   ├── __init__.py                      # Export compare_run_cohorts
 │   ├── stats.py                         # Pure-stdlib Student-t incomplete beta CDF/quantile, paired/Welch/one-sample tests
-│   ├── drift.py                         # Add detect_cohort_drift helper
-│   ├── compare.py                       # Enrich compare_runs with paired stats; add compare_run_cohorts
-│   └── gate.py                          # Add 100%-branch-covered statistical significance gate rule
+│   ├── drift.py                         # Add EMBEDDING_CONFIG drift check & detect_cohort_drift helper
+│   ├── compare.py                       # Enrich compare_runs with paired stats; add build_pooled_cohort_run & compare_run_cohorts
+│   └── gate.py                          # Add QualityGate.evaluate_cohort & 100%-branch-covered statistical significance gate rule
 ├── reporting/
 │   ├── builder.py                       # Register embedding/context metrics cleanly in decoupling diagnostics
 │   └── markdown.py                      # Render statistical CI / significance / cohort tables & explanations

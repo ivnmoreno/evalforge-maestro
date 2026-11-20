@@ -18,8 +18,9 @@ All existing exports and signatures in `tests/test_api_stability.py` remain unch
 - Embedding Metrics (`evalforge_maestro.embeddings`):
   - `EmbeddingSimilarityMetric`
   - `ContextEmbeddingSimilarityMetric`
-- Statistical Comparison Function (`evalforge_maestro.regression`):
+- Statistical Comparison Functions (`evalforge_maestro.regression`):
   - `compare_run_cohorts`
+  - `build_pooled_cohort_run`
 
 ---
 
@@ -45,12 +46,13 @@ Both classes satisfy `Metric` (`evaluate(case, execution)`) and `AsyncBatchMetri
   )
   ```
 - **Edge & Error Rules**:
-  1. Lazy `[embeddings]` check (`_resolve_numpy()`): raises `MissingExtraError(extra="embeddings", package="numpy")` when `numpy` is not installed (unless upstream error? Check BEFORE computing vectors; raises immediately on invocation if `numpy` is missing!).
+  1. Fail-fast lazy `[embeddings]` check (`_resolve_numpy()`): executes **FIRST** on invocation (`evaluate`, `aevaluate`, `aevaluate_batch`), raising `MissingExtraError(extra="embeddings", package="numpy")` immediately whenever `numpy` is absent — regardless of `--mock`, upstream errors, or missing ground truth (while `__init__` and module imports keep `numpy` and `litellm` unloaded on cold start).
   2. `execution.errors` non-empty -> `status = INCONCLUSIVE`, `score = None`, `explanation = scrub_secret_text(...)`.
   3. `case.reference is None` or blank (`not case.reference.strip()`) -> `status = NOT_APPLICABLE`, `score = None`.
   4. `execution.output is None` or blank (`not execution.output.strip()`) -> `status = FAIL` (`score = 0.0` if `threshold > 0`, else `PASS`), without unnecessary remote embedding call.
   5. Zero-norm / `NaN` / `Inf` / mismatched vector dimension / failed retries -> `status = INCONCLUSIVE`, `score = None`.
   6. Clamped score: `score = round_score(max(0.0, min(1.0, cos_sim)))`. `status = PASS` iff `score + FLOAT_EPSILON >= threshold`, else `FAIL`. Threshold resolves as `case.criteria.metric_thresholds.get(metric_id, case.criteria.pass_threshold or config.pass_threshold)`.
+  7. Strict config isolation: `[embedding]` settings (`EmbeddingConfig`) remain completely separate from `[judge]` settings (`JudgeConfig`) and default `model` to `"mock-embedding"` when `mock_mode=True`.
 
 ### 2.2 `ContextEmbeddingSimilarityMetric`
 - **`metric_id`**: `"context_embedding_similarity"`
@@ -89,10 +91,14 @@ Both classes satisfy `Metric` (`evaluate(case, execution)`) and `AsyncBatchMetri
     - `one_sample_t_run` if one side has `1` run and the other has `>= 2` valid run means.
     - `paired_t_case` fallback if neither side has `>= 2` run means for that metric.
   - Populates `MetricComparison.case_statistics` with `paired_t_case` computed over aligned per-case cohort means across trials!
-  - Runs `detect_cohort_drift` verifying intra-cohort and cross-cohort consistency (`dataset_fingerprint`, `metric_version`, `judge_config_fingerprint`).
+  - Runs `detect_cohort_drift` verifying intra-cohort and cross-cohort consistency (`dataset_fingerprint`, `metric_version`, `judge_config_fingerprint`, `embedding_config_fingerprint`).
 
-### 3.3 `QualityGate.evaluate(...)`
-- Evaluates `mc.statistics.significance == SignificanceStatus.SIGNIFICANT_REGRESSION` across `comparison.metric_comparisons`:
-  - When found -> emits rule `"statistical_regression:<metric_id>"` with `GateDecision.FAIL` if `policy.fail_on_significant_regression` else `GateDecision.WARNING`.
-  - When none found among metrics having `mc.statistics` (`!= insufficient_data`) or when `comparison` has statistical summaries -> emits `"statistical_significance"` (`GateDecision.PASS`).
+### 3.3 `QualityGate.evaluate(...)` and `QualityGate.evaluate_cohort(...)`
+- `QualityGate.evaluate(run, *, comparison=None, trend=None)` retains its exact signature pinned in `tests/test_api_stability.py`.
+- `QualityGate.evaluate_cohort(runs, *, comparison=None, trend=None) -> QualityGateResult` evaluates repeated trial cohorts (`run --repeats N` and multi-candidate `compare`):
+  - Fails `"mandatory_cases"` if **any** run in `runs` contains a mandatory failure (`has_mandatory_failures == True`), collecting all failed case IDs cleanly.
+  - Pools metric scores and inconclusive rates across all `N` repeats in `runs` via `build_pooled_cohort_run(runs)` so `"metric_floor:*"` and `"inconclusive_rate"` evaluate against the candidate cohort's pooled averages.
+- Inside both `evaluate` and `evaluate_cohort`, statistical comparison checks evaluate `mc.statistics.significance == SignificanceStatus.SIGNIFICANT_REGRESSION` across `comparison.metric_comparisons`:
+  - Any statistically significant negative shift (`ci_high < 0`, `p < alpha`, regardless of drop magnitude relative to `max_regression_drop`) emits rule `"statistical_regression:<metric_id>"` with `GateDecision.FAIL` if `policy.fail_on_significant_regression` else `GateDecision.WARNING` (escalating to exit code `1` under CLI `--strict`).
+  - When no significant regressions occur across statistically comparable metrics, emits `"statistical_significance"` (`GateDecision.PASS`).
   - Must maintain **100%** branch coverage in `tests/unit/test_quality_gate.py`.

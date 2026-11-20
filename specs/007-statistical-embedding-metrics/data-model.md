@@ -91,30 +91,38 @@ Captures provenance when `compare_run_cohorts` evaluates multiple baseline and/o
 
 All new fields carry defaults so existing persisted `1.0` JSON artifacts continue validating untouched:
 
-### 3.1 `MetricComparison`
+### 3.1 `RunRecord`, `RunManifestEntry`, `BaselineEntry` & `DriftCategory`
+- Existing fields preserved unchanged (`schema_version="1.0"`, `judge_config_fingerprint`, etc.).
+- Added backward-compatible optional provenance tracking for embedding configurations:
+  - `RunRecord.embedding_config_fingerprint: str | None = None`
+  - `RunManifestEntry.embedding_config_fingerprint: str | None = None`
+  - `BaselineEntry.embedding_config_fingerprint: str | None = None`
+  - `DriftCategory.EMBEDDING_CONFIG = "embedding_config"` (triggers drift warning only when non-matching embedding config fingerprints differ between compared runs; historical `None == None` emits zero drift)
+
+### 3.2 `MetricComparison`
 - Existing fields preserved unchanged (`metric_id`, `baseline_version`, `candidate_version`, `baseline_score`, `candidate_score`, `delta`, `direction`, `status_count_deltas`).
 - Added:
   - `statistics: StatisticalSummary | None = None`
   - `case_statistics: StatisticalSummary | None = None` (populated in multi-run cohorts with aligned case-level paired inference over trial-averaged case scores; `None` when single-run 1v1 already uses `statistics` for `paired_t_case`)
 
-### 3.2 `RunComparisonReport`
+### 3.3 `RunComparisonReport`
 - Existing fields preserved unchanged (`schema_version="1.0"`, `baseline_run_id`, `candidate_run_id`, ...).
 - Added:
   - `cohort: RunCohortSummary | None = None` (present for multi-run cohort comparisons, `None` for single-run pairwise `compare_runs`).
 
-### 3.3 `QualityGatePolicy`
+### 3.4 `QualityGatePolicy`
 - Existing fields preserved unchanged.
 - Added:
   - `confidence_level: float = Field(default=0.95, gt=0.0, lt=1.0)` (strict finite bool-rejected float)
   - `min_statistical_samples: int = Field(default=2, ge=2)` (strict non-bool `int >= 2`)
   - `fail_on_significant_regression: bool = False`
 
-### 3.4 `CLIResolvedConfig`
+### 3.5 `CLIResolvedConfig`
 - Existing fields preserved unchanged.
 - Added:
   - `repeats: int = Field(default=1, ge=1, le=100)`
   - `baseline_runs: list[str] = Field(default_factory=list)`
   - `embedding: ResolvedEmbeddingSettings = Field(default_factory=ResolvedEmbeddingSettings)`
 
-### 3.5 `ReportDocument`
-- When `run --repeats N` (`N >= 2`) executes, `ReportDocument.evaluation` holds the canonical `RunRecord` (latest repeat, preserving `report_kind == ReportKind.RUN` invariance!), while `ReportDocument.comparison` captures the baseline/cohort comparison (when baseline provided) OR a dedicated `cohort_run_ids: list[str] = Field(default_factory=list)` optional summary field on `ReportDocument` records all `N` persisted `RunRecord` IDs cleanly! (And when `--repeats 1`, `cohort_run_ids == []` by default, zero breaking change!)
+### 3.6 `ReportDocument`
+- When `run --repeats N` (`N >= 2`) executes, `ReportDocument.evaluation` holds the representative canonical `RunRecord` (latest repeat, preserving `report_kind == ReportKind.RUN` invariance), `ReportDocument.cohort_run_ids: list[str] = Field(default_factory=list)` lists all `N` persisted run IDs, and `ReportDocument.cohort_aggregates: dict[str, AggregateMetricSummary] = Field(default_factory=dict)` captures the pooled cohort summaries evaluated by `QualityGate.evaluate_cohort(...)` (while `ReportDocument.comparison` captures the cohort regression comparison when `--baseline` is provided). When `--repeats == 1`, both new fields default to empty (`[]` and `{}`), zero breaking change!

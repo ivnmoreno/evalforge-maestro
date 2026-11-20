@@ -3,11 +3,11 @@
 **Feature**: `007-statistical-embedding-metrics`  
 **References**: [`spec.md`](spec.md) | [`data-model.md`](data-model.md) | [`contracts/public-api-and-metrics.md`](contracts/public-api-and-metrics.md) | [`contracts/cli-and-config.md`](contracts/cli-and-config.md)
 
-## Scenario 1 — Minimal Core Purity & `MissingExtraError`
+## Scenario 1 — Minimal Core Purity & Fail-Fast `MissingExtraError`
 
 1. Install only core package dependencies (`uv sync --frozen --no-dev` or isolated wheel install).
 2. Verify cold-start `import evalforge_maestro` and `evalforge-maestro --help` leave `numpy`, `scipy`, `litellm`, and `docpipe_maestro` absent from `sys.modules`.
-3. Evaluate `EmbeddingSimilarityMetric` in that environment and confirm `MissingExtraError` reports `evalforge-maestro[embeddings]`.
+3. Evaluate `EmbeddingSimilarityMetric` in that environment (even with `--mock` or on a case lacking `reference`) and confirm `MissingExtraError` raises immediately naming `evalforge-maestro[embeddings]` (CLI exit code `3`).
 
 ## Scenario 2 — Offline Deterministic `--mock` Embedding Metrics (`[embeddings]`)
 
@@ -32,8 +32,9 @@ evalforge-maestro compare cand-trial-r01 cand-trial-r02 cand-trial-r03 --baselin
 
 **Expected**:
 - All 6 immutable `RunRecord` files persist cleanly without mutation.
-- `compare` emits `MetricComparison.statistics` (with `welch_t_run`, `ci_low`, `ci_high`, `p_value`, `baseline_std`, `candidate_std`, `significance`) alongside per-case `case_statistics` (`paired_t_case`), rendered in both JSON and Three-Way Markdown output.
-- Statistically significant regressions emit an advisory `WARNING` by default (escalating to exit code `1` under `--strict` or `--fail-on-significant-regression`).
+- Any mandatory case failure in *any* repeat fails Quality Gate (`mandatory_cases`), while metric floors evaluate pooled candidate cohort means across all `3` trials.
+- `compare` emits primary run-to-run `MetricComparison.statistics` (`welch_t_run`, `ci_low`, `ci_high`, `p_value`, `baseline_std`, `candidate_std`, `significance`) alongside secondary per-case `case_statistics` (`paired_t_case`), rendered in both JSON and Three-Way Markdown output.
+- Any statistically significant negative shift (`ci_high < 0`, regardless of magnitude vs `max_regression_drop`) emits an advisory `WARNING` by default, escalating to exit code `1` under `--strict` or `--fail-on-significant-regression`.
 
 ## Scenario 4 — Repository Quality & Coverage Verification
 
