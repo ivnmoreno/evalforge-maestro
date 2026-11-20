@@ -935,7 +935,7 @@ def test_cli_run_live_agent_target_with_toml_extractors_and_metrics(
     cfg_path = tmp_path / "evalforge.toml"
     cfg_path.write_text(
         "[run]\n"
-        f'dataset = "{ds_ok}"\n'
+        f'dataset = "{ds_ok.as_posix()}"\n'
         "strict = true\n"
         "[target]\n"
         'type = "agent"\n'
@@ -1014,7 +1014,7 @@ def test_cli_run_live_agent_target_with_toml_extractors_and_metrics(
     cfg_bad_ext = tmp_path / "bad_agent_ext.toml"
     cfg_bad_ext.write_text(
         "[run]\n"
-        f'dataset = "{ds_ok}"\n'
+        f'dataset = "{ds_ok.as_posix()}"\n'
         "[target]\n"
         'type = "agent"\n'
         'entrypoint = "my_agent_mod:run_agent"\n'
