@@ -96,6 +96,7 @@ All new fields carry defaults so existing persisted `1.0` JSON artifacts continu
 - Added backward-compatible optional provenance tracking for embedding configurations:
   - `RunRecord.embedding_config_fingerprint: str | None = None`
   - `RunManifestEntry.embedding_config_fingerprint: str | None = None`
+  - `OrchestratorConfig.embedding_config_fingerprint: str | None = None`
   - `BaselineEntry.embedding_config_fingerprint: str | None = None`
   - `DriftCategory.EMBEDDING_CONFIG = "embedding_config"` (triggers drift warning only when non-matching embedding config fingerprints differ between compared runs; historical `None == None` emits zero drift)
 
