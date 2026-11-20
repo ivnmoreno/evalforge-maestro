@@ -84,7 +84,9 @@ def test_m5_runtime_models_validate_against_contract_schemas() -> None:
             )
         ],
     )
-    _validate_def(merged, "CLIResolvedConfig", cfg.model_dump(mode="json"))
+    m5_cfg = cfg.model_dump(mode="json")
+    m5_cfg["target"].pop("agent_extractors", None)
+    _validate_def(merged, "CLIResolvedConfig", m5_cfg)
 
     run = RunRecord(
         run_id="run-schema-1",

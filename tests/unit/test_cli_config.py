@@ -199,3 +199,23 @@ def test_docpipe_target_config_precedence_and_validation(tmp_path: Path) -> None
             cwd=tmp_path,
             environ={"EVALFORGE_DOCPIPE_API_BASE": "ftp://invalid.example.com"},
         )
+
+
+def test_agent_target_config_with_agent_extractors(tmp_path: Path) -> None:
+    (tmp_path / "evalforge.toml").write_text(
+        "[target]\n"
+        'type = "agent"\n'
+        'entrypoint = "my_agent:run"\n'
+        "[target.agent_extractors]\n"
+        'tool_calls = "invocations"\n'
+        'trace = "steps"\n',
+        encoding="utf-8",
+    )
+    resolved, _, warnings = resolve_cli_config(cwd=tmp_path)
+    assert warnings == []
+    assert resolved.target.target_type is not None
+    assert resolved.target.target_type.value == "agent"
+    assert resolved.target.agent_extractors == {
+        "tool_calls": "invocations",
+        "trace": "steps",
+    }

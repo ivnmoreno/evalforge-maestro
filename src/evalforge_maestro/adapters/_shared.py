@@ -12,11 +12,61 @@ from pydantic import ValidationError
 from evalforge_maestro._canonical import canonical_sha256, redact_secrets
 from evalforge_maestro.exceptions import AdapterError
 from evalforge_maestro.types import (
+    AgentTraceStep,
     EvaluationCase,
     ExecutionResult,
     RetrievedChunk,
     TokenUsage,
+    ToolCallRecord,
 )
+
+_MISSING_FIELD = object()
+
+
+def resolve_dotted_path(payload: Any, path: str) -> Any:
+    """Resolve a dotted attribute/mapping path or return _MISSING_FIELD sentinel."""
+    current = payload
+    for part in path.split("."):
+        if isinstance(current, Mapping):
+            if part not in current:
+                return _MISSING_FIELD
+            current = current[part]
+        elif hasattr(current, part):
+            current = getattr(current, part)
+        else:
+            return _MISSING_FIELD
+    return current
+
+
+def extract_adapter_field(
+    payload: Any,
+    rule: str | Callable[[Any], Any] | None,
+    fallbacks: tuple[str, ...],
+    *,
+    required: bool,
+    default: Any = None,
+    field_label: str,
+    adapter_label: str = "RAG",
+) -> Any:
+    """Resolve one target field via explicit rule (strict) or fallback lookup paths."""
+    if rule is not None:
+        if callable(rule):
+            return rule(payload)
+        resolved = resolve_dotted_path(payload, rule)
+        if resolved is _MISSING_FIELD:
+            raise AdapterError(f"Extractor path {rule!r} for {field_label} was not found")
+        return resolved
+
+    for candidate in fallbacks:
+        resolved = resolve_dotted_path(payload, candidate)
+        if resolved is not _MISSING_FIELD:
+            return resolved
+
+    if required:
+        raise AdapterError(
+            f"Missing required {adapter_label} field {field_label!r} (tried {', '.join(fallbacks)})"
+        )
+    return default
 
 
 def redact_adapter_config(
@@ -131,6 +181,8 @@ def build_validated_execution_result(
     case: EvaluationCase,
     output: Any,
     retrieved_chunks: Sequence[RetrievedChunk],
+    trace: Sequence[AgentTraceStep] = (),
+    tool_calls: Sequence[ToolCallRecord] = (),
     tokens: TokenUsage | None,
     elapsed_seconds: float,
     truncated: bool,
@@ -149,6 +201,8 @@ def build_validated_execution_result(
             input=case.input,
             output=output,
             retrieved_chunks=list(retrieved_chunks),
+            trace=list(trace),
+            tool_calls=list(tool_calls),
             tokens=tokens,
             elapsed_seconds=elapsed_seconds,
             truncated=truncated,

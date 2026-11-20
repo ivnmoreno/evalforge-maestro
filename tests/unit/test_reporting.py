@@ -40,6 +40,8 @@ from evalforge_maestro.types import (
     RunComparisonReport,
     RunRecord,
     TargetChangeSummary,
+    ToolCallRecord,
+    ToolCallStatus,
     TrendDirection,
     TrendReport,
 )
@@ -301,3 +303,129 @@ def test_compare_trend_and_calibration_report_builders() -> None:
     cal_md = render_markdown(cal_doc)
     assert "Calibration Disagreements" in cal_md
     assert "sk-calibration-secret-key999" not in cal_md
+
+
+def test_detect_decoupled_agent_trace_vs_answer_diagnostics_and_markdown() -> None:
+    run = RunRecord(
+        run_id="run-agent-decoupled",
+        timestamp=datetime(2026, 11, 20, tzinfo=timezone.utc),
+        package_version="0.2.0",
+        dataset_id="agent-ds",
+        dataset_fingerprint="d" * 64,
+        evaluated_case_count=2,
+        metric_versions={
+            "exact_match": "1.0.0",
+            "policy_compliance": "1.0.0",
+            "tool_selection": "1.0.0",
+        },
+        aggregates={
+            "exact_match": AggregateMetricSummary(
+                metric_id="exact_match",
+                metric_version="1.0.0",
+                mean_score=0.5,
+                applicable_count=2,
+                pass_count=1,
+                fail_count=1,
+            ),
+            "policy_compliance": AggregateMetricSummary(
+                metric_id="policy_compliance",
+                metric_version="1.0.0",
+                mean_score=0.5,
+                applicable_count=2,
+                pass_count=1,
+                fail_count=1,
+            ),
+            "tool_selection": AggregateMetricSummary(
+                metric_id="tool_selection",
+                metric_version="1.0.0",
+                mean_score=1.0,
+                applicable_count=2,
+                pass_count=2,
+            ),
+        },
+        status_counts={MetricStatus.PASS: 4, MetricStatus.FAIL: 2},
+        case_results=[
+            CaseEvaluationRecord(
+                case_id="ag-bad-trace",
+                mandatory=True,
+                execution=ExecutionResult(
+                    case_id="ag-bad-trace",
+                    input="Refund user",
+                    output="Refund issued.",
+                    tool_calls=[
+                        ToolCallRecord(
+                            name="delete_user",
+                            arguments={"token": "sk-topsecret-agent-token99"},
+                            status=ToolCallStatus.BLOCKED,
+                        )
+                    ],
+                    elapsed_seconds=0.05,
+                ),
+                metrics={
+                    "exact_match": MetricResult(
+                        metric_id="exact_match",
+                        metric_version="1.0.0",
+                        score=1.0,
+                        status=MetricStatus.PASS,
+                        explanation="Answer matched.",
+                    ),
+                    "policy_compliance": MetricResult(
+                        metric_id="policy_compliance",
+                        metric_version="1.0.0",
+                        score=0.0,
+                        status=MetricStatus.FAIL,
+                        explanation="Forbidden tool invoked.",
+                    ),
+                },
+            ),
+            CaseEvaluationRecord(
+                case_id="ag-bad-answer",
+                mandatory=False,
+                execution=ExecutionResult(
+                    case_id="ag-bad-answer",
+                    input="Check policy",
+                    output="Wrong text",
+                    tool_calls=[ToolCallRecord(name="read_policy", status=ToolCallStatus.SUCCESS)],
+                    elapsed_seconds=0.05,
+                ),
+                metrics={
+                    "exact_match": MetricResult(
+                        metric_id="exact_match",
+                        metric_version="1.0.0",
+                        score=0.0,
+                        status=MetricStatus.FAIL,
+                        explanation="Wrong synthesis.",
+                    ),
+                    "tool_selection": MetricResult(
+                        metric_id="tool_selection",
+                        metric_version="1.0.0",
+                        score=1.0,
+                        status=MetricStatus.PASS,
+                        explanation="Selected read_policy cleanly.",
+                    ),
+                    "policy_compliance": MetricResult(
+                        metric_id="policy_compliance",
+                        metric_version="1.0.0",
+                        score=1.0,
+                        status=MetricStatus.PASS,
+                        explanation="Policy ok.",
+                    ),
+                },
+            ),
+        ],
+    )
+    doc = build_run_report(run)
+    decs = doc.diagnostics.decoupled_evidence_cases
+    assert len(decs) == 2
+    assert decs[0].case_id == "ag-bad-trace"
+    assert decs[0].category.value == "answer_passed_agent_trace_failed"
+    assert "delete_user" in decs[0].explanation
+    assert decs[1].case_id == "ag-bad-answer"
+    assert decs[1].category.value == "agent_trace_passed_answer_failed"
+    assert "read_policy" in decs[1].explanation
+
+    md = render_markdown(doc)
+    assert "answer_passed_agent_trace_failed" in md
+    assert "agent_trace_passed_answer_failed" in md
+    assert "delete_user" in md
+    assert "sk-topsecret-agent-token99" not in md

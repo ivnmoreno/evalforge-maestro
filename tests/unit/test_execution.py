@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from evalforge_maestro.exceptions import ExecutionError, MemoryLimitExceededErro
 from evalforge_maestro.execution import EvaluationOrchestrator
 from evalforge_maestro.storage import LocalRunStore
 from evalforge_maestro.types import (
+    CaseCriteria,
     EvaluationCase,
     ExecutionResult,
     MetricMetadata,
@@ -227,3 +229,92 @@ def test_orchestrator_propagates_judge_config_fingerprint(tmp_path: Path) -> Non
     assert len(manifest) == 1
     assert manifest[0].judge_config_fingerprint == fp
     assert manifest[0].model_id == "m-1"
+
+
+def test_post_scoring_trace_and_tool_call_truncation_preserves_types_and_scores(
+    tmp_path: Path,
+) -> None:
+    from evalforge_maestro.metrics import argument_correctness, policy_compliance
+    from evalforge_maestro.types import ExpectedToolCall
+
+    long_payload = "x" * 200
+    ds = DatasetEngine(
+        [
+            {
+                "id": "c1",
+                "input": "q",
+                "expected_tools": [
+                    ExpectedToolCall(name="search", arguments={"q": long_payload}),
+                ],
+                "criteria": CaseCriteria(forbidden_argument_patterns=["--forbidden"]),
+            }
+        ]
+    )
+
+    class _MockAgentAdapter:
+        system_version = "agent-1"
+        model_id = "m-1"
+        config_fingerprint = None
+
+        async def execute(self, case: EvaluationCase) -> ExecutionResult:
+            return ExecutionResult.model_validate(
+                {
+                    "case_id": case.id,
+                    "input": case.input,
+                    "output": "done",
+                    "elapsed_seconds": 0.02,
+                    "tool_calls": [
+                        {
+                            "id": "tc-1",
+                            "name": "search",
+                            "arguments": {"q": long_payload, "extra": "y" * 200},
+                            "result": "res-" + ("z" * 200),
+                            "error": "err-" + ("w" * 200),
+                            "status": "error",
+                            "raw_arguments": "{bad-" + ("k" * 200),
+                        }
+                    ],
+                    "trace": [
+                        {
+                            "step_index": 0,
+                            "kind": "reasoning",
+                            "content": "thought-" + ("a" * 200),
+                            "error": "step-err-" + ("b" * 200),
+                            "metadata": {"blob": "m" * 200},
+                        },
+                        {
+                            "step_index": 1,
+                            "kind": "tool_call",
+                            "tool_calls": [
+                                {"id": "tc-2", "name": "extra_step", "arguments": {"d": "n" * 200}}
+                            ],
+                        },
+                    ],
+                }
+            )
+
+    orch = EvaluationOrchestrator(
+        config=OrchestratorConfig(max_context_chars=80),
+        storage_root=tmp_path / ".evalforge",
+    )
+    run = orch.run(
+        ds,
+        _MockAgentAdapter(),
+        [argument_correctness, policy_compliance],
+        run_id="run-agent-trunc",
+    )
+    # Scoring happened BEFORE post-scoring truncation
+    assert run.case_results[0].metrics["argument_correctness"].score == 1.0
+    assert run.case_results[0].metrics["policy_compliance"].score == 1.0
+
+    # Persisted execution has truncated=True and reloads strictly via LocalRunStore
+    reloaded = LocalRunStore(tmp_path / ".evalforge").load_run("run-agent-trunc")
+    exec_rec = reloaded.case_results[0].execution
+    assert exec_rec.truncated is True
+    assert exec_rec.tool_calls or exec_rec.trace
+    serialized_calls = json.dumps([c.model_dump(mode="json") for c in exec_rec.tool_calls])
+    serialized_trace = json.dumps([s.model_dump(mode="json") for s in exec_rec.trace])
+    assert len(serialized_calls) <= 80 or all(
+        len(str(c.arguments.get("q", ""))) <= 80 for c in exec_rec.tool_calls
+    )
+    assert len(serialized_trace) <= 80 or len(exec_rec.trace) <= 1

@@ -893,3 +893,140 @@ def test_cli_run_docpipe_forwards_options_and_enforces_local_only(
     )
     assert code_pii == 4
     assert CLIErrorPayload.model_validate_json(out_pii).exit_code == 4
+
+
+def test_cli_run_live_agent_target_with_toml_extractors_and_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "my_agent_mod.py").write_text(
+        "def run_agent(prompt: str) -> dict:\n"
+        "    if 'forbidden' in prompt.lower():\n"
+        "        tok = 'sk-agent-cli-secret999'\n"
+        "        return {\n"
+        "            'final_answer': 'ok',\n"
+        "            'invocations': [{'tool': 'drop_db', 'args': {'token': tok}}],\n"
+        "        }\n"
+        "    return {\n"
+        "        'final_answer': 'Refunded',\n"
+        "        'invocations': [\n"
+        "            {'tool': 'lookup', 'args': {'id': 1}, 'status': 'error', 'error': 'blip'},\n"
+        "            {'tool': 'lookup', 'args': {'id': 1}, 'status': 'success'},\n"
+        "        ],\n"
+        "    }\n",
+        encoding="utf-8",
+    )
+    ds_ok = tmp_path / "agent_ok.jsonl"
+    ds_ok.write_text(
+        json.dumps(
+            {
+                "id": "ag-ok",
+                "input": "Process refund",
+                "reference": "Refunded",
+                "expected_tools": [{"name": "lookup", "arguments": {"id": 1}}],
+                "criteria": {"forbidden_tools": ["drop_db"], "max_steps": 4},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cfg_path = tmp_path / "evalforge.toml"
+    cfg_path.write_text(
+        "[run]\n"
+        f'dataset = "{ds_ok.as_posix()}"\n'
+        "strict = true\n"
+        "[target]\n"
+        'type = "agent"\n'
+        'entrypoint = "my_agent_mod:run_agent"\n'
+        "[target.agent_extractors]\n"
+        'output = "final_answer"\n'
+        'tool_calls = "invocations"\n'
+        "[metrics]\n"
+        'enabled = ["exact_match", "tool_selection", "argument_correctness", '
+        '"execution_sequence", "tool_efficiency", "policy_compliance", "failure_recovery"]\n',
+        encoding="utf-8",
+    )
+    val_code, val_out, val_err = _run_cli(["config", "validate", "--json"], capsys)
+    assert val_code == 0, val_err
+    assert json.loads(val_out)["valid"] is True
+
+    run_code, run_out, run_err = _run_cli(["run", "--json"], capsys)
+    assert run_code == 0, run_err
+    doc = ReportDocument.model_validate_json(run_out)
+    assert doc.evaluation is not None
+    assert doc.gate is not None
+    assert doc.gate.decision == GateDecision.PASS
+    for mid in (
+        "exact_match",
+        "tool_selection",
+        "argument_correctness",
+        "execution_sequence",
+        "tool_efficiency",
+        "policy_compliance",
+        "failure_recovery",
+    ):
+        assert doc.evaluation.aggregates[mid].mean_score == 1.0
+
+    # Decoupled forbidden-tool case surfaces answer_passed_agent_trace_failed and masks secrets
+    ds_bad = tmp_path / "agent_bad.jsonl"
+    ds_bad.write_text(
+        json.dumps(
+            {
+                "id": "ag-bad",
+                "input": "Run forbidden action",
+                "reference": "ok",
+                "expected_tools": [{"name": "lookup"}],
+                "criteria": {"mandatory": True, "forbidden_tools": ["drop_db"]},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    fail_code, fail_out, _ = _run_cli(
+        [
+            "run",
+            "--dataset",
+            str(ds_bad),
+            "--target-type",
+            "agent",
+            "--target",
+            "my_agent_mod:run_agent",
+            "--metric",
+            "exact_match",
+            "--metric",
+            "policy_compliance",
+            "--strict",
+            "--json",
+        ],
+        capsys,
+    )
+    assert fail_code == 1
+    assert "sk-agent-cli-secret999" not in fail_out
+    fail_doc = ReportDocument.model_validate_json(fail_out)
+    assert fail_doc.diagnostics.decoupled_evidence_cases
+    assert (
+        fail_doc.diagnostics.decoupled_evidence_cases[0].category.value
+        == "answer_passed_agent_trace_failed"
+    )
+
+    cfg_bad_ext = tmp_path / "bad_agent_ext.toml"
+    cfg_bad_ext.write_text(
+        "[run]\n"
+        f'dataset = "{ds_ok.as_posix()}"\n'
+        "[target]\n"
+        'type = "agent"\n'
+        'entrypoint = "my_agent_mod:run_agent"\n'
+        "[target.agent_extractors]\n"
+        'unknown_ext = "foo"\n'
+        "[metrics]\n"
+        'enabled = ["tool_selection"]\n',
+        encoding="utf-8",
+    )
+    bad_ext_code, bad_ext_out, _ = _run_cli(
+        ["run", "--config", str(cfg_bad_ext), "--json"],
+        capsys,
+    )
+    assert bad_ext_code == 2
+    assert CLIErrorPayload.model_validate_json(bad_ext_out).exit_code == 2

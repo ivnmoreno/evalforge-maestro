@@ -71,6 +71,7 @@ class _TomlTargetSection(_TomlStrictSection):
     model_id: str | None = None
     arg_mode: str | None = None
     rag_extractors: dict[str, str] | None = None
+    agent_extractors: dict[str, str] | None = None
     docpipe_mode: str | None = None
     docpipe_collection: str | None = None
     docpipe_persist_dir: str | None = None
@@ -628,6 +629,7 @@ def _resolve_target_section(
         model_id=model_id,
         arg_mode=arg_mode,
         rag_extractors=dict(target_sec.rag_extractors or {}),
+        agent_extractors=dict(target_sec.agent_extractors or {}),
         docpipe_mode=docpipe_mode,
         docpipe_collection=docpipe_collection,
         docpipe_persist_dir=docpipe_persist_dir,

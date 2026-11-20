@@ -394,13 +394,17 @@ def _render_diagnostics_section(document: ReportDocument) -> list[str]:
                     for mid, m in sorted(rec.metrics.items())
                     if m.status in {MetricStatus.FAIL, MetricStatus.INCONCLUSIVE}
                 ]
+                tools_preview = ", ".join(
+                    f"{c.name}({c.status.value})" for c in rec.execution.tool_calls[:5]
+                )
+                tools_note = f" [tools: {tools_preview}]" if tools_preview else ""
                 lines.append(
                     "| "
                     + " | ".join(
                         [
                             f"`{_cell(rec.case_id)}`",
                             str(rec.mandatory),
-                            _cell(", ".join(bad_metrics)),
+                            _cell(", ".join(bad_metrics) + tools_note),
                             _cell("; ".join(rec.execution.errors), max_len=100),
                             _cell(rec.execution.output, max_len=100),
                         ]

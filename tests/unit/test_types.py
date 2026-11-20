@@ -28,6 +28,8 @@ from evalforge_maestro.exceptions import (
     StorageError,
 )
 from evalforge_maestro.types import (
+    AgentExtractorConfig,
+    AgentTraceStep,
     AggregateMetricSummary,
     AnomalyFlag,
     AnomalyScope,
@@ -44,8 +46,10 @@ from evalforge_maestro.types import (
     DriftCategory,
     DriftWarning,
     EvaluationCase,
+    EvidenceDecouplingCategory,
     ExecutionResult,
     ExpectedContextItem,
+    ExpectedToolCall,
     GateDecision,
     HumanCalibrationSample,
     JudgeConfig,
@@ -59,7 +63,11 @@ from evalforge_maestro.types import (
     RetrievedChunk,
     RunManifestEntry,
     RunRecord,
+    TargetType,
     TokenUsage,
+    ToolCallRecord,
+    ToolCallStatus,
+    TraceStepKind,
     TrendDirection,
 )
 
@@ -247,12 +255,14 @@ def test_run_record_manifest_orchestrator_config_and_schema_parity() -> None:
     )
     assert meta.metric_id == "exact_match"
 
-    # Parity check against M1 schemas overlaid with additive M3 RunRecord / RunManifestEntry fields
+    # Parity check against M1 schemas overlaid with additive M3 and M6 fields
     schema_path = Path("specs/001-evaluation-foundation/contracts/schemas-v1.json")
     contract_schema: dict[str, Any] = json.loads(schema_path.read_text(encoding="utf-8"))
     m3_path = Path("specs/003-experiment-regression-engine/contracts/schemas-v1.json")
     m3_schema: dict[str, Any] = json.loads(m3_path.read_text(encoding="utf-8"))
-    defs = {**contract_schema["$defs"], **m3_schema["$defs"]}
+    m6_path = Path("specs/006-agent-trace-evaluation/contracts/schemas-v1.json")
+    m6_schema: dict[str, Any] = json.loads(m6_path.read_text(encoding="utf-8"))
+    defs = {**contract_schema["$defs"], **m3_schema["$defs"], **m6_schema["$defs"]}
 
     def _validate_def(def_name: str, payload: dict[str, Any]) -> None:
         sub_schema = {"$schema": contract_schema["$schema"], "$defs": defs, **defs[def_name]}
@@ -603,3 +613,153 @@ def test_m4_judge_and_calibration_contracts_enforce_strict_validation() -> None:
             human_threshold_evaluated=0.5,
             recommended_pass_threshold=0.5,
         )
+
+
+def test_m6_typed_agent_trace_tool_calls_and_legacy_compatibility() -> None:
+    assert TargetType.AGENT.value == "agent"
+    assert EvidenceDecouplingCategory.ANSWER_PASSED_AGENT_TRACE_FAILED.value == (
+        "answer_passed_agent_trace_failed"
+    )
+    assert EvidenceDecouplingCategory.AGENT_TRACE_PASSED_ANSWER_FAILED.value == (
+        "agent_trace_passed_answer_failed"
+    )
+    assert {s.value for s in ToolCallStatus} == {"success", "error", "timeout", "blocked"}
+    assert {k.value for k in TraceStepKind} == {
+        "user_input",
+        "reasoning",
+        "llm_response",
+        "tool_call",
+        "tool_result",
+        "error",
+        "final_output",
+        "other",
+    }
+
+    # ExpectedToolCall handles string shorthand, legacy dicts, and nested OpenAI function dicts
+    case = EvaluationCase.model_validate(
+        {
+            "id": "agent-legacy-1",
+            "input": "Check weather and order status",
+            "expected_tools": [
+                "  search_docs  ",
+                {"tool": "get_order", "args": '{"id": "42"}', "order": 1},
+                {
+                    "function": {"name": "calc_tax", "arguments": {"rate": 0.1}},
+                    "optional": True,
+                },
+            ],
+            "criteria": {
+                "mandatory": True,
+                "forbidden_tools": ["  drop_db  "],
+                "forbidden_argument_patterns": ["--force"],
+                "max_steps": 8,
+                "max_tool_calls": 5,
+                "allow_redundant_failures": 1,
+            },
+        }
+    )
+    assert case.expected_tools is not None
+    assert [t.name for t in case.expected_tools] == ["search_docs", "get_order", "calc_tax"]
+    assert case.expected_tools[1].arguments == {"id": "42"}
+    assert case.expected_tools[1].order == 1
+    assert case.expected_tools[2].optional is True
+    assert case.criteria.forbidden_tools == ["drop_db"]
+    assert case.criteria.max_steps == 8
+
+    for bad_exp in (
+        {"name": "   "},
+        {"name": "t", "arguments_schema": {"type": 123}},
+        {"name": "t", "order": True},
+        {"name": "t", "order": -1},
+        {"name": "t", "unknown": 1},
+    ):
+        with pytest.raises(ValidationError):
+            ExpectedToolCall.model_validate(bad_exp)
+
+    for bad_crit in (
+        {"forbidden_tools": ["   "]},
+        {"forbidden_argument_patterns": ["  "]},
+        {"max_steps": 0},
+        {"max_steps": True},
+        {"max_tool_calls": 0},
+        {"allow_redundant_failures": -1},
+        {"allow_redundant_failures": True},
+    ):
+        with pytest.raises(ValidationError):
+            CaseCriteria.model_validate(bad_crit)
+
+    # ToolCallRecord parses OpenAI/legacy dict forms and flags invalid JSON arguments safely
+    good_tc = ToolCallRecord.model_validate(
+        {
+            "tool_call_id": "call-1",
+            "type": "function",
+            "function": {"name": "get_order", "arguments": '{"id": "42"}'},
+            "output": {"status": "ok"},
+            "step_index": 1,
+            "elapsed_seconds": 0.05,
+        }
+    )
+    assert good_tc.id == "call-1"
+    assert good_tc.name == "get_order"
+    assert good_tc.arguments == {"id": "42"}
+    assert good_tc.result == {"status": "ok"}
+    assert good_tc.status == ToolCallStatus.SUCCESS
+
+    bad_json_tc = ToolCallRecord.model_validate(
+        {
+            "name": "get_order",
+            "arguments": "{not-valid-json",
+        }
+    )
+    assert bad_json_tc.arguments == {}
+    assert bad_json_tc.raw_arguments == "{not-valid-json"
+    assert bad_json_tc.argument_parse_error is not None
+    assert bad_json_tc.status == ToolCallStatus.ERROR
+
+    non_obj_tc = ToolCallRecord.model_validate({"name": "x", "arguments": "[1, 2]"})
+    assert non_obj_tc.status == ToolCallStatus.ERROR
+    assert non_obj_tc.argument_parse_error is not None
+
+    failed_tc = ToolCallRecord.model_validate({"tool": "x", "status": "failed", "error": "boom"})
+    assert failed_tc.status == ToolCallStatus.ERROR
+    assert failed_tc.error == "boom"
+
+    # AgentTraceStep maps legacy role/type strings and preserves nested ToolCallRecord models
+    exec_res = ExecutionResult.model_validate(
+        {
+            "case_id": "agent-legacy-1",
+            "input": "Check order",
+            "output": "Done",
+            "elapsed_seconds": 0.1,
+            "tool_calls": [{"tool": "get_order", "args": {"id": "42"}}],
+            "trace": [
+                {"step_index": 0, "role": "user", "content": "Check order"},
+                {"step_index": 1, "role": "assistant", "tool_calls": [{"name": "get_order"}]},
+                {"step_index": 2, "role": "tool", "tool_call_id": "c1", "content": "ok"},
+            ],
+        }
+    )
+    assert isinstance(exec_res.tool_calls[0], ToolCallRecord)
+    assert [s.kind for s in exec_res.trace] == [
+        TraceStepKind.USER_INPUT,
+        TraceStepKind.LLM_RESPONSE,
+        TraceStepKind.TOOL_RESULT,
+    ]
+    assert isinstance(exec_res.trace[1], AgentTraceStep)
+    assert isinstance(exec_res.trace[1].tool_calls[0], ToolCallRecord)
+
+    for bad_tc in (
+        {"name": "   "},
+        {"name": "t", "step_index": True},
+        {"name": "t", "elapsed_seconds": float("nan")},
+        {"name": "t", "unknown_extra": 1},
+    ):
+        with pytest.raises(ValidationError):
+            ToolCallRecord.model_validate(bad_tc)
+
+    ext = AgentExtractorConfig(tool_calls="steps.calls", step_kind="kind")
+    assert ext.tool_calls == "steps.calls"
+    with pytest.raises(ValidationError):
+        AgentExtractorConfig(tool_calls="   ")
+    with pytest.raises(ValidationError):
+        AgentExtractorConfig.model_validate({"bad_key": "x"})

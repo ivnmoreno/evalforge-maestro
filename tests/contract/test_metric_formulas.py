@@ -8,14 +8,31 @@ import inspect
 from typing import Any
 
 from evalforge_maestro.metrics import (
+    ArgumentCorrectnessMetric,
     ExactMatchMetric,
+    ExecutionSequenceMetric,
+    FailureRecoveryMetric,
     HitRateAtKMetric,
     JsonSchemaValidationMetric,
     MRRMetric,
     NDCGAtKMetric,
     NormalizedMatchMetric,
+    PolicyComplianceMetric,
     PrecisionAtKMetric,
     RecallAtKMetric,
+    ToolEfficiencyMetric,
+    ToolSelectionMetric,
+)
+from evalforge_maestro.metrics.agent import (
+    _ordered_expected_tools,
+    _prepare_agent_inputs,
+    _score_argument_correctness,
+    _score_execution_sequence,
+    _score_failure_recovery,
+    _score_policy_compliance,
+    _score_single_call_args,
+    _score_tool_efficiency,
+    _score_tool_selection,
 )
 from evalforge_maestro.metrics.deterministic import (
     _normalize_text,
@@ -53,6 +70,24 @@ EXPECTED_FORMULA_AST_HASHES: dict[tuple[str, str], str] = {
     ),
     ("mrr", "1.0.0"): "ae08798fe2bebf8c77e1829c701ef14d3dc7cd4bb603f96ae1043b9f6b34e06d",
     ("ndcg_at_k", "1.0.0"): ("baeb50d3cd6caa6df1da49a69c87825507b39d31ac5c09216f61547d745fc72d"),
+    ("tool_selection", "1.0.0"): (
+        "d072c1bb422fa12a6760fc77ea53e950d857ee42aaefa13215c1f2e874103fcf"
+    ),
+    ("argument_correctness", "1.0.0"): (
+        "909e1e038bbc81a7e9583ad78530b8a5df4dfa5e4e535f7da055683e4ecf6cc3"
+    ),
+    ("execution_sequence", "1.0.0"): (
+        "ccce1917b51a1fb6e05e7eb5791c6385c7e52b1cda93b890807511c2150a0bf5"
+    ),
+    ("tool_efficiency", "1.0.0"): (
+        "eb758982365a75ce62e52cd9e3e9e5d35d6e04f7491124552b622cbe83ecb925"
+    ),
+    ("policy_compliance", "1.0.0"): (
+        "79a9eaf3f49aa7fb94ee78d932b167bde1439ca6685b173006c9ced587d48197"
+    ),
+    ("failure_recovery", "1.0.0"): (
+        "4df4e5ec3e4c9fa5e232edba07bb5a84571e3f91668c66fd6c1a166d4f3f8dbb"
+    ),
 }
 EXPECTED_HELPER_AST_HASHES: dict[str, str] = {
     "_normalize_text": "4f43cd1a8b68d4f56128c79deb226d67e0e8848539574af47634f665624458e0",
@@ -60,6 +95,9 @@ EXPECTED_HELPER_AST_HASHES: dict[str, str] = {
     "_prepare_retrieval_inputs": (
         "1442a4c60f3622560cfeb440fd18dbbad2c795f91de1eb2ad5031333cb783e00"
     ),
+    "_prepare_agent_inputs": ("8d2c5a05bafbb1a85c1d4909450d9a6399b43fc9f65bf728ee5ea8a0269dad93"),
+    "_ordered_expected_tools": ("4553a10e73a1ee9c92e8d1f9de6d2fcf9360e027aa8fefd10181929c8338efd9"),
+    "_score_single_call_args": ("52594bd8d5c3a2b64902e919fb9ea25b2f6c559f2765d25a148c5f7aadb5b76d"),
 }
 
 
@@ -107,6 +145,12 @@ def test_deterministic_metric_metadata_and_formula_ast_hashes() -> None:
         (HitRateAtKMetric(), _score_hit_rate_at_k),
         (MRRMetric(), _score_mrr),
         (NDCGAtKMetric(), _score_ndcg_at_k),
+        (ToolSelectionMetric(), _score_tool_selection),
+        (ArgumentCorrectnessMetric(), _score_argument_correctness),
+        (ExecutionSequenceMetric(), _score_execution_sequence),
+        (ToolEfficiencyMetric(), _score_tool_efficiency),
+        (PolicyComplianceMetric(), _score_policy_compliance),
+        (FailureRecoveryMetric(), _score_failure_recovery),
     ]
     for metric, fn in metrics_and_fns:
         meta = metric.metadata
@@ -130,4 +174,16 @@ def test_deterministic_metric_metadata_and_formula_ast_hashes() -> None:
     assert (
         _normalized_ast_hash(_prepare_retrieval_inputs)
         == EXPECTED_HELPER_AST_HASHES["_prepare_retrieval_inputs"]
+    )
+    assert (
+        _normalized_ast_hash(_prepare_agent_inputs)
+        == EXPECTED_HELPER_AST_HASHES["_prepare_agent_inputs"]
+    )
+    assert (
+        _normalized_ast_hash(_ordered_expected_tools)
+        == EXPECTED_HELPER_AST_HASHES["_ordered_expected_tools"]
+    )
+    assert (
+        _normalized_ast_hash(_score_single_call_args)
+        == EXPECTED_HELPER_AST_HASHES["_score_single_call_args"]
     )

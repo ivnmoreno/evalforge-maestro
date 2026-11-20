@@ -136,6 +136,7 @@ class TargetType(str, Enum):
     RAG = "rag"
     DOCPIPE = "docpipe"
     REPLAY = "replay"
+    AGENT = "agent"
 
 
 class ReportKind(str, Enum):
@@ -148,10 +149,34 @@ class ReportKind(str, Enum):
 
 
 class EvidenceDecouplingCategory(str, Enum):
-    """Category identifying divergence between retrieval evidence and answer/grounding outcome."""
+    """Category identifying divergence between intermediate evidence and final outcome."""
 
     ANSWER_PASSED_RETRIEVAL_FAILED = "answer_passed_retrieval_or_grounding_failed"
     RETRIEVAL_PASSED_ANSWER_FAILED = "retrieval_passed_answer_or_grounding_failed"
+    ANSWER_PASSED_AGENT_TRACE_FAILED = "answer_passed_agent_trace_failed"
+    AGENT_TRACE_PASSED_ANSWER_FAILED = "agent_trace_passed_answer_failed"
+
+
+class ToolCallStatus(str, Enum):
+    """Normalized execution outcome status for an agent tool invocation."""
+
+    SUCCESS = "success"
+    ERROR = "error"
+    TIMEOUT = "timeout"
+    BLOCKED = "blocked"
+
+
+class TraceStepKind(str, Enum):
+    """Canonical category describing a step within an agent execution trace."""
+
+    USER_INPUT = "user_input"
+    REASONING = "reasoning"
+    LLM_RESPONSE = "llm_response"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    ERROR = "error"
+    FINAL_OUTPUT = "final_output"
+    OTHER = "other"
 
 
 def _ensure_json_serializable(value: _T, *, field_name: str) -> _T:
@@ -251,12 +276,17 @@ class CaseMetadata(_StrictModel):
 
 
 class CaseCriteria(_StrictModel):
-    """Case-level acceptance rules, mandatory flags, and schema/threshold overrides."""
+    """Case-level acceptance rules, mandatory flags, and schema/policy constraints."""
 
     mandatory: bool = False
     json_schema: dict[str, Any] | None = None
     pass_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     metric_thresholds: dict[str, float] = Field(default_factory=dict)
+    forbidden_tools: list[str] = Field(default_factory=list)
+    forbidden_argument_patterns: list[str] = Field(default_factory=list)
+    max_steps: int | None = Field(default=None, ge=1)
+    max_tool_calls: int | None = Field(default=None, ge=1)
+    allow_redundant_failures: int = Field(default=0, ge=0)
 
     @field_validator("json_schema")
     @classmethod
@@ -292,6 +322,21 @@ class CaseCriteria(_StrictModel):
             _reject_bool_number(threshold, field_name=f"metric_thresholds[{metric_id!r}]")
         return value
 
+    @field_validator("forbidden_tools", "forbidden_argument_patterns")
+    @classmethod
+    def _validate_policy_lists(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        return [
+            _ensure_non_empty_str(item, field_name=f"CaseCriteria.{info.field_name}")
+            for item in value
+        ]
+
+    @field_validator("max_steps", "max_tool_calls", "allow_redundant_failures", mode="before")
+    @classmethod
+    def _validate_budget_ints(cls, value: Any, info: ValidationInfo) -> Any:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name=f"CaseCriteria.{info.field_name}")
+
 
 class ExpectedContextItem(_StrictModel):
     """Typed ground-truth retrieval item on EvaluationCase.expected_context."""
@@ -311,6 +356,163 @@ class ExpectedContextItem(_StrictModel):
         return _reject_strict_int(value, field_name="ExpectedContextItem.relevance")
 
 
+_TOOL_STATUS_ALIASES: dict[str, ToolCallStatus] = {
+    "success": ToolCallStatus.SUCCESS,
+    "succeeded": ToolCallStatus.SUCCESS,
+    "ok": ToolCallStatus.SUCCESS,
+    "completed": ToolCallStatus.SUCCESS,
+    "error": ToolCallStatus.ERROR,
+    "errored": ToolCallStatus.ERROR,
+    "fail": ToolCallStatus.ERROR,
+    "failed": ToolCallStatus.ERROR,
+    "failure": ToolCallStatus.ERROR,
+    "timeout": ToolCallStatus.TIMEOUT,
+    "timed_out": ToolCallStatus.TIMEOUT,
+    "blocked": ToolCallStatus.BLOCKED,
+    "denied": ToolCallStatus.BLOCKED,
+    "forbidden": ToolCallStatus.BLOCKED,
+}
+
+_TRACE_KIND_ALIASES: dict[str, TraceStepKind] = {
+    "user_input": TraceStepKind.USER_INPUT,
+    "user": TraceStepKind.USER_INPUT,
+    "input": TraceStepKind.USER_INPUT,
+    "reasoning": TraceStepKind.REASONING,
+    "thought": TraceStepKind.REASONING,
+    "thinking": TraceStepKind.REASONING,
+    "llm_response": TraceStepKind.LLM_RESPONSE,
+    "assistant": TraceStepKind.LLM_RESPONSE,
+    "model": TraceStepKind.LLM_RESPONSE,
+    "llm": TraceStepKind.LLM_RESPONSE,
+    "tool_call": TraceStepKind.TOOL_CALL,
+    "tool_use": TraceStepKind.TOOL_CALL,
+    "action": TraceStepKind.TOOL_CALL,
+    "tool_result": TraceStepKind.TOOL_RESULT,
+    "tool": TraceStepKind.TOOL_RESULT,
+    "observation": TraceStepKind.TOOL_RESULT,
+    "error": TraceStepKind.ERROR,
+    "final_output": TraceStepKind.FINAL_OUTPUT,
+    "output": TraceStepKind.FINAL_OUTPUT,
+    "answer": TraceStepKind.FINAL_OUTPUT,
+    "other": TraceStepKind.OTHER,
+}
+
+
+def _decode_json_object_args(raw_args: Any) -> tuple[dict[str, Any], str | None, str | None]:
+    if raw_args is None or raw_args == "":
+        return {}, None, None
+    if isinstance(raw_args, dict):
+        checked = _ensure_json_serializable(dict(raw_args), field_name="tool_arguments")
+        return checked, None, None
+    if isinstance(raw_args, str):
+        try:
+            decoded = json.loads(raw_args)
+        except json.JSONDecodeError as exc:
+            return {}, raw_args, f"Invalid JSON tool arguments: {exc.msg}"
+        if not isinstance(decoded, dict):
+            return (
+                {},
+                raw_args,
+                f"Tool arguments JSON must decode to an object, got {type(decoded).__name__}",
+            )
+        checked = _ensure_json_serializable(decoded, field_name="tool_arguments")
+        return checked, None, None
+    raise ValueError(
+        f"Tool arguments must be a mapping or JSON string, got {type(raw_args).__name__}"
+    )
+
+
+def _validate_json_schema_mapping(value: dict[str, Any], *, field_name: str) -> dict[str, Any]:
+    _ensure_json_serializable(value, field_name=field_name)
+    from jsonschema.exceptions import SchemaError
+    from jsonschema.validators import validator_for
+
+    validator_cls = validator_for(value)
+    try:
+        validator_cls.check_schema(value)
+    except SchemaError as exc:
+        raise ValueError(f"{field_name} is not a valid JSON Schema: {exc}") from exc
+    return value
+
+
+class ExpectedToolCall(_StrictModel):
+    """Typed expectation for an agent tool invocation on EvaluationCase.expected_tools."""
+
+    name: str = Field(min_length=1)
+    arguments: dict[str, Any] | None = None
+    arguments_schema: dict[str, Any] | None = None
+    argument_match_mode: Literal["subset", "exact"] = "subset"
+    optional: bool = False
+    order: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_input(cls, data: Any) -> Any:
+        if isinstance(data, ExpectedToolCall):
+            return data
+        if isinstance(data, str):
+            return {"name": data}
+        if not isinstance(data, dict):
+            return data
+
+        payload = dict(data)
+        fn_block = payload.pop("function", None)
+        if isinstance(fn_block, dict):
+            if "name" not in payload and "name" in fn_block:
+                payload["name"] = fn_block["name"]
+            if "arguments" not in payload and "arguments" in fn_block:
+                payload["arguments"] = fn_block["arguments"]
+            if payload.get("type") == "function":
+                payload.pop("type", None)
+
+        if "name" not in payload:
+            for alias in ("tool", "tool_name"):
+                if alias in payload:
+                    payload["name"] = payload.pop(alias)
+                    break
+        if "arguments" not in payload:
+            for alias in ("args", "input", "parameters"):
+                if alias in payload:
+                    payload["arguments"] = payload.pop(alias)
+                    break
+        if "arguments_schema" not in payload and "schema" in payload:
+            payload["arguments_schema"] = payload.pop("schema")
+
+        if "arguments" in payload and payload["arguments"] is not None:
+            decoded, _, parse_err = _decode_json_object_args(payload["arguments"])
+            if parse_err is not None:
+                raise ValueError(f"ExpectedToolCall.arguments invalid: {parse_err}")
+            payload["arguments"] = decoded
+
+        return payload
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="ExpectedToolCall.name")
+
+    @field_validator("arguments")
+    @classmethod
+    def _validate_arguments(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        return _ensure_json_serializable(value, field_name="ExpectedToolCall.arguments")
+
+    @field_validator("arguments_schema")
+    @classmethod
+    def _validate_arguments_schema(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        return _validate_json_schema_mapping(value, field_name="ExpectedToolCall.arguments_schema")
+
+    @field_validator("order", mode="before")
+    @classmethod
+    def _validate_order(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name="ExpectedToolCall.order")
+
+
 class EvaluationCase(_StrictModel):
     """Immutable single evaluation case contract."""
 
@@ -319,7 +521,7 @@ class EvaluationCase(_StrictModel):
     input: Any
     reference: Any = None
     expected_context: list[str | ExpectedContextItem] | None = None
-    expected_tools: list[dict[str, Any]] | None = None
+    expected_tools: list[ExpectedToolCall] | None = None
     metadata: CaseMetadata = Field(default_factory=CaseMetadata)
     criteria: CaseCriteria = Field(default_factory=CaseCriteria)
 
@@ -353,7 +555,7 @@ class EvaluationCase(_StrictModel):
             seen_ids.add(item_id)
         return normalized
 
-    @field_validator("input", "reference", "expected_tools")
+    @field_validator("input", "reference")
     @classmethod
     def _validate_json_fields(cls, value: Any) -> Any:
         return _ensure_json_serializable(value, field_name="EvaluationCase")
@@ -416,6 +618,184 @@ class RetrievedChunk(_StrictModel):
         return _ensure_json_serializable(value, field_name="RetrievedChunk.metadata")
 
 
+class ToolCallRecord(_StrictModel):
+    """Normalized record describing one agent tool invocation."""
+
+    id: str | None = None
+    name: str = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    raw_arguments: str | None = None
+    argument_parse_error: str | None = None
+    result: Any = None
+    status: ToolCallStatus = ToolCallStatus.SUCCESS
+    error: str | None = None
+    step_index: int | None = Field(default=None, ge=0)
+    elapsed_seconds: float | None = Field(default=None, ge=0.0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_input(cls, data: Any) -> Any:
+        if isinstance(data, ToolCallRecord):
+            return data
+        if not isinstance(data, dict):
+            return data
+
+        payload = dict(data)
+        fn_block = payload.pop("function", None)
+        if isinstance(fn_block, dict):
+            if "name" not in payload and "name" in fn_block:
+                payload["name"] = fn_block["name"]
+            if "arguments" not in payload and "arguments" in fn_block:
+                payload["arguments"] = fn_block["arguments"]
+            if payload.get("type") == "function":
+                payload.pop("type", None)
+
+        if "id" not in payload:
+            for alias in ("tool_call_id", "call_id"):
+                if alias in payload:
+                    payload["id"] = payload.pop(alias)
+                    break
+        if "name" not in payload:
+            for alias in ("tool", "tool_name"):
+                if alias in payload:
+                    payload["name"] = payload.pop(alias)
+                    break
+        if "arguments" not in payload:
+            for alias in ("args", "input", "parameters"):
+                if alias in payload:
+                    payload["arguments"] = payload.pop(alias)
+                    break
+        if "result" not in payload:
+            for alias in ("output", "response"):
+                if alias in payload:
+                    payload["result"] = payload.pop(alias)
+                    break
+
+        if "arguments" in payload:
+            decoded, raw_arg, parse_err = _decode_json_object_args(payload["arguments"])
+            payload["arguments"] = decoded
+            if raw_arg is not None and payload.get("raw_arguments") is None:
+                payload["raw_arguments"] = raw_arg
+            if parse_err is not None and payload.get("argument_parse_error") is None:
+                payload["argument_parse_error"] = parse_err
+
+        raw_err = payload.get("error")
+        has_err = (isinstance(raw_err, str) and bool(raw_err.strip())) or bool(
+            payload.get("argument_parse_error")
+        )
+        raw_status = payload.get("status")
+        if raw_status is None:
+            payload["status"] = ToolCallStatus.ERROR if has_err else ToolCallStatus.SUCCESS
+        elif isinstance(raw_status, str):
+            mapped = _TOOL_STATUS_ALIASES.get(raw_status.strip().lower())
+            if mapped is not None:
+                payload["status"] = mapped
+
+        return payload
+
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, value: str | None) -> str | None:
+        return _validate_optional_str(value, field_name="ToolCallRecord.id")
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="ToolCallRecord.name")
+
+    @field_validator("step_index", mode="before")
+    @classmethod
+    def _validate_step_index(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name="ToolCallRecord.step_index")
+
+    @field_validator("elapsed_seconds", mode="before")
+    @classmethod
+    def _validate_elapsed(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        return _reject_bool_number(value, field_name="ToolCallRecord.elapsed_seconds")
+
+    @field_validator("arguments", "result", "metadata")
+    @classmethod
+    def _validate_json_fields(cls, value: Any, info: ValidationInfo) -> Any:
+        return _ensure_json_serializable(value, field_name=f"ToolCallRecord.{info.field_name}")
+
+
+class AgentTraceStep(_StrictModel):
+    """Canonical ordered execution step inside ExecutionResult.trace."""
+
+    step_index: int | None = Field(default=None, ge=0)
+    kind: TraceStepKind = TraceStepKind.OTHER
+    name: str | None = None
+    content: Any = None
+    tool_calls: list[ToolCallRecord] = Field(default_factory=list)
+    tool_call_id: str | None = None
+    status: ToolCallStatus | None = None
+    error: str | None = None
+    elapsed_seconds: float | None = Field(default=None, ge=0.0)
+    tokens: TokenUsage | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_input(cls, data: Any) -> Any:
+        if isinstance(data, AgentTraceStep):
+            return data
+        if not isinstance(data, dict):
+            return data
+
+        payload = dict(data)
+        if "kind" not in payload:
+            for alias in ("type", "role"):
+                if alias in payload:
+                    raw_kind = payload.pop(alias)
+                    if isinstance(raw_kind, str):
+                        payload["kind"] = _TRACE_KIND_ALIASES.get(
+                            raw_kind.strip().lower(), raw_kind
+                        )
+                    else:
+                        payload["kind"] = raw_kind
+                    break
+        elif isinstance(payload["kind"], str):
+            raw_kind = payload["kind"].strip().lower()
+            if raw_kind in _TRACE_KIND_ALIASES:
+                payload["kind"] = _TRACE_KIND_ALIASES[raw_kind]
+
+        if "status" in payload and isinstance(payload["status"], str):
+            mapped = _TOOL_STATUS_ALIASES.get(payload["status"].strip().lower())
+            if mapped is not None:
+                payload["status"] = mapped
+
+        return payload
+
+    @field_validator("name", "tool_call_id")
+    @classmethod
+    def _validate_opt_ids(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"AgentTraceStep.{info.field_name}")
+
+    @field_validator("step_index", mode="before")
+    @classmethod
+    def _validate_step_index(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name="AgentTraceStep.step_index")
+
+    @field_validator("elapsed_seconds", mode="before")
+    @classmethod
+    def _validate_elapsed(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        return _reject_bool_number(value, field_name="AgentTraceStep.elapsed_seconds")
+
+    @field_validator("content", "metadata")
+    @classmethod
+    def _validate_json_fields(cls, value: Any, info: ValidationInfo) -> Any:
+        return _ensure_json_serializable(value, field_name=f"AgentTraceStep.{info.field_name}")
+
+
 class ExecutionResult(_StrictModel):
     """Captured target output, latency, errors, and evidence for one EvaluationCase."""
 
@@ -424,8 +804,8 @@ class ExecutionResult(_StrictModel):
     input: Any
     output: Any = None
     retrieved_chunks: list[RetrievedChunk] = Field(default_factory=list)
-    trace: list[dict[str, Any]] = Field(default_factory=list)
-    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    trace: list[AgentTraceStep] = Field(default_factory=list)
+    tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     tokens: TokenUsage | None = None
     elapsed_seconds: float = Field(ge=0.0)
     truncated: bool = False
@@ -446,7 +826,7 @@ class ExecutionResult(_StrictModel):
     def _validate_elapsed(cls, value: Any) -> Any:
         return _reject_bool_number(value, field_name="ExecutionResult.elapsed_seconds")
 
-    @field_validator("input", "output", "trace", "tool_calls", "adapter_metadata")
+    @field_validator("input", "output", "adapter_metadata")
     @classmethod
     def _validate_json_fields(cls, value: Any) -> Any:
         return _ensure_json_serializable(value, field_name="ExecutionResult")
@@ -723,6 +1103,40 @@ class RAGExtractorConfig(_StrictModel):
             return _ensure_non_empty_str(
                 value,
                 field_name=f"RAGExtractorConfig.{info.field_name}",
+            )
+        return value
+
+
+class AgentExtractorConfig(_StrictModel):
+    """Declarative field-extraction rules for protocol-based AgentAdapter."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_assignment=True,
+        arbitrary_types_allowed=True,
+    )
+
+    output: str | Callable[[Any], Any] | None = None
+    tool_calls: str | Callable[[Any], Any] | None = None
+    trace: str | Callable[[Any], Any] | None = None
+    tokens: str | Callable[[Any], Any] | None = None
+    errors: str | Callable[[Any], Any] | None = None
+    tool_id: str | Callable[[Any], Any] | None = None
+    tool_name: str | Callable[[Any], Any] | None = None
+    tool_arguments: str | Callable[[Any], Any] | None = None
+    tool_result: str | Callable[[Any], Any] | None = None
+    tool_status: str | Callable[[Any], Any] | None = None
+    tool_error: str | Callable[[Any], Any] | None = None
+    step_kind: str | Callable[[Any], Any] | None = None
+    step_content: str | Callable[[Any], Any] | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _validate_extractor_spec(cls, value: Any, info: ValidationInfo) -> Any:
+        if isinstance(value, str):
+            return _ensure_non_empty_str(
+                value,
+                field_name=f"AgentExtractorConfig.{info.field_name}",
             )
         return value
 
@@ -1762,6 +2176,7 @@ class ResolvedTargetConfig(_StrictModel):
     model_id: str | None = None
     arg_mode: Literal["input", "case"] = "input"
     rag_extractors: dict[str, str] = Field(default_factory=dict)
+    agent_extractors: dict[str, str] = Field(default_factory=dict)
     docpipe_mode: Literal["answer_detailed", "retrieve"] = "answer_detailed"
     docpipe_collection: str | None = None
     docpipe_persist_dir: str | None = None
@@ -1794,12 +2209,12 @@ class ResolvedTargetConfig(_StrictModel):
     def _validate_docpipe_api_base(cls, value: str | None) -> str | None:
         return _validate_http_api_base(value, field_name="ResolvedTargetConfig.docpipe_api_base")
 
-    @field_validator("rag_extractors")
+    @field_validator("rag_extractors", "agent_extractors")
     @classmethod
-    def _validate_extractors(cls, value: dict[str, str]) -> dict[str, str]:
+    def _validate_extractors(cls, value: dict[str, str], info: ValidationInfo) -> dict[str, str]:
         return {
-            _ensure_non_empty_str(k, field_name="ResolvedTargetConfig.rag_extractors"): (
-                _ensure_non_empty_str(v, field_name="ResolvedTargetConfig.rag_extractors")
+            _ensure_non_empty_str(k, field_name=f"ResolvedTargetConfig.{info.field_name}"): (
+                _ensure_non_empty_str(v, field_name=f"ResolvedTargetConfig.{info.field_name}")
             )
             for k, v in value.items()
         }

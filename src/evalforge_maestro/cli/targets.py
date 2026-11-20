@@ -8,7 +8,13 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from evalforge_maestro.adapters import CallableAdapter, DocpipeAdapter, RAGAdapter, ReplayAdapter
+from evalforge_maestro.adapters import (
+    AgentAdapter,
+    CallableAdapter,
+    DocpipeAdapter,
+    RAGAdapter,
+    ReplayAdapter,
+)
 from evalforge_maestro.cli.logging_utils import CLIStructuredLogger
 from evalforge_maestro.datasets import DatasetEngine
 from evalforge_maestro.exceptions import ConfigurationError
@@ -27,16 +33,23 @@ from evalforge_maestro.judges.security import (
     wrap_pii_guarded_metric,
 )
 from evalforge_maestro.metrics import (
+    ArgumentCorrectnessMetric,
     ExactMatchMetric,
+    ExecutionSequenceMetric,
+    FailureRecoveryMetric,
     HitRateAtKMetric,
     JsonSchemaValidationMetric,
     MRRMetric,
     NDCGAtKMetric,
     NormalizedMatchMetric,
+    PolicyComplianceMetric,
     PrecisionAtKMetric,
     RecallAtKMetric,
+    ToolEfficiencyMetric,
+    ToolSelectionMetric,
 )
 from evalforge_maestro.types import (
+    AgentExtractorConfig,
     CLIResolvedConfig,
     JudgeConfig,
     Metric,
@@ -57,6 +70,12 @@ _DIRECT_DETERMINISTIC_FACTORIES: dict[str, Callable[..., Metric]] = {
     "normalized_match": NormalizedMatchMetric,
     "json_schema_validation": JsonSchemaValidationMetric,
     "mrr": MRRMetric,
+    "tool_selection": ToolSelectionMetric,
+    "argument_correctness": ArgumentCorrectnessMetric,
+    "execution_sequence": ExecutionSequenceMetric,
+    "tool_efficiency": ToolEfficiencyMetric,
+    "policy_compliance": PolicyComplianceMetric,
+    "failure_recovery": FailureRecoveryMetric,
 }
 _TOPK_RETRIEVAL_FACTORIES: dict[str, Callable[..., Metric]] = {
     "precision_at_k": PrecisionAtKMetric,
@@ -346,6 +365,21 @@ def build_target_adapter(
     if effective_type == TargetType.CALLABLE:
         return CallableAdapter(
             target_fn,
+            system_version=t_cfg.system_version,
+            model_id=t_cfg.model_id,
+            pass_case=pass_case,
+        )
+
+    if effective_type == TargetType.AGENT:
+        try:
+            agent_ext = (
+                AgentExtractorConfig(**t_cfg.agent_extractors) if t_cfg.agent_extractors else None
+            )
+        except Exception as exc:
+            raise ConfigurationError(f"Invalid [target.agent_extractors] setting: {exc}") from exc
+        return AgentAdapter(
+            target_fn,
+            extractors=agent_ext,
             system_version=t_cfg.system_version,
             model_id=t_cfg.model_id,
             pass_case=pass_case,
