@@ -21,6 +21,9 @@ from evalforge_maestro.types import (
 def test_examples_ci_template_executes_end_to_end(tmp_path: Path) -> None:
     repo_ci_dir = Path("examples/ci")
     workflow_text = (repo_ci_dir / "evalforge-ci.yml").read_text(encoding="utf-8")
+    assert "actions/checkout@v6" in workflow_text
+    assert "actions/setup-python@v6" in workflow_text
+    assert "actions/upload-artifact@v7" in workflow_text
     assert "evalforge-maestro>=0.1.4" in workflow_text
     assert "evalforge-maestro config validate" in workflow_text
     assert "evalforge-maestro run" in workflow_text
