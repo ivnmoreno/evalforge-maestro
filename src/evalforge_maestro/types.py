@@ -67,6 +67,23 @@ class TrendDirection(str, Enum):
     INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
 
 
+class SignificanceStatus(str, Enum):
+    """Statistical hypothesis-test classification for regression comparisons."""
+
+    SIGNIFICANT_IMPROVEMENT = "significant_improvement"
+    SIGNIFICANT_REGRESSION = "significant_regression"
+    NOT_SIGNIFICANT = "not_significant"
+    INSUFFICIENT_DATA = "insufficient_data"
+
+
+class StatisticalMethod(str, Enum):
+    """Statistical inferential method applied to compute intervals and p-values."""
+
+    PAIRED_T_CASE = "paired_t_case"
+    WELCH_T_RUN = "welch_t_run"
+    ONE_SAMPLE_T_RUN = "one_sample_t_run"
+
+
 class DriftCategory(str, Enum):
     """Measurement and provenance comparability drift categories."""
 
@@ -74,8 +91,16 @@ class DriftCategory(str, Enum):
     METRIC_VERSION = "METRIC_VERSION"
     METRIC_SET = "METRIC_SET"
     JUDGE_CONFIG = "JUDGE_CONFIG"
+    EMBEDDING_CONFIG = "EMBEDDING_CONFIG"
     DATASET_CAPPED = "DATASET_CAPPED"
     CASE_SET_MISMATCH = "CASE_SET_MISMATCH"
+
+
+class EmbeddingAggregation(str, Enum):
+    """Chunk-similarity aggregation strategy for context embedding evaluation."""
+
+    MAX = "max"
+    MEAN = "mean"
 
 
 class AnomalyType(str, Enum):
@@ -946,6 +971,7 @@ class RunRecord(_StrictModel):
     model_id: str | None = None
     config_fingerprint: str | None = None
     judge_config_fingerprint: str | None = None
+    embedding_config_fingerprint: str | None = None
     metric_versions: dict[str, str]
     seed: int | None = None
     aggregates: dict[str, AggregateMetricSummary]
@@ -959,10 +985,10 @@ class RunRecord(_StrictModel):
     def _validate_non_empty(cls, value: str) -> str:
         return _ensure_non_empty_str(value, field_name="RunRecord")
 
-    @field_validator("judge_config_fingerprint")
+    @field_validator("judge_config_fingerprint", "embedding_config_fingerprint")
     @classmethod
-    def _validate_judge_fingerprint(cls, value: str | None) -> str | None:
-        return _validate_optional_str(value, field_name="RunRecord.judge_config_fingerprint")
+    def _validate_config_fingerprints(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"RunRecord.{info.field_name}")
 
     @field_validator("timestamp")
     @classmethod
@@ -995,16 +1021,17 @@ class RunManifestEntry(_StrictModel):
     model_id: str | None = None
     config_fingerprint: str | None = None
     judge_config_fingerprint: str | None = None
+    embedding_config_fingerprint: str | None = None
     metric_versions: dict[str, str]
     aggregate_scores: dict[str, float | None]
     status_counts: dict[MetricStatus, int]
     mandatory_failed_case_ids: list[str] = Field(default_factory=list)
     has_mandatory_failures: bool = False
 
-    @field_validator("judge_config_fingerprint")
+    @field_validator("judge_config_fingerprint", "embedding_config_fingerprint")
     @classmethod
-    def _validate_judge_fingerprint(cls, value: str | None) -> str | None:
-        return _validate_optional_str(value, field_name="RunManifestEntry.judge_config_fingerprint")
+    def _validate_config_fingerprints(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"RunManifestEntry.{info.field_name}")
 
     @field_validator("timestamp")
     @classmethod
@@ -1030,6 +1057,7 @@ class RunManifestEntry(_StrictModel):
             model_id=record.model_id,
             config_fingerprint=record.config_fingerprint,
             judge_config_fingerprint=record.judge_config_fingerprint,
+            embedding_config_fingerprint=record.embedding_config_fingerprint,
             metric_versions=dict(record.metric_versions),
             aggregate_scores={
                 metric_id: summary.mean_score for metric_id, summary in record.aggregates.items()
@@ -1053,13 +1081,12 @@ class OrchestratorConfig(_StrictModel):
     retain_checkpoints: bool = False
     seed: int | None = None
     judge_config_fingerprint: str | None = None
+    embedding_config_fingerprint: str | None = None
 
-    @field_validator("judge_config_fingerprint")
+    @field_validator("judge_config_fingerprint", "embedding_config_fingerprint")
     @classmethod
-    def _validate_judge_fingerprint(cls, value: str | None) -> str | None:
-        return _validate_optional_str(
-            value, field_name="OrchestratorConfig.judge_config_fingerprint"
-        )
+    def _validate_config_fingerprints(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"OrchestratorConfig.{info.field_name}")
 
     @field_validator(
         "max_concurrency",
@@ -1230,6 +1257,9 @@ class QualityGatePolicy(_StrictModel):
     fail_on_anomaly: bool = False
     fail_on_degrading_trend: bool = False
     fail_on_mandatory_regression: bool = True
+    confidence_level: float = Field(default=0.95, gt=0.0, lt=1.0)
+    min_statistical_samples: int = Field(default=2, ge=2)
+    fail_on_significant_regression: bool = False
 
     @field_validator(
         "min_score",
@@ -1238,6 +1268,7 @@ class QualityGatePolicy(_StrictModel):
         "case_drop_warning_threshold",
         "trend_slope_threshold",
         "max_inconclusive_rate",
+        "confidence_level",
         mode="before",
     )
     @classmethod
@@ -1247,7 +1278,12 @@ class QualityGatePolicy(_StrictModel):
         _reject_bool_number(value, field_name=f"QualityGatePolicy.{info.field_name}")
         return round_score(float(value))
 
-    @field_validator("max_regressed_cases", "min_trend_runs", mode="before")
+    @field_validator(
+        "max_regressed_cases",
+        "min_trend_runs",
+        "min_statistical_samples",
+        mode="before",
+    )
     @classmethod
     def _validate_policy_ints(cls, value: Any, info: ValidationInfo) -> Any:
         if value is None:
@@ -1279,6 +1315,7 @@ class BaselineEntry(_StrictModel):
     model_id: str | None = None
     config_fingerprint: str | None = None
     judge_config_fingerprint: str | None = None
+    embedding_config_fingerprint: str | None = None
     metric_versions: dict[str, str] = Field(default_factory=dict)
     aggregate_scores: dict[str, float | None] = Field(default_factory=dict)
 
@@ -1305,7 +1342,12 @@ class BaselineEntry(_StrictModel):
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
 
-    @field_validator("note", "dataset_version", "judge_config_fingerprint")
+    @field_validator(
+        "note",
+        "dataset_version",
+        "judge_config_fingerprint",
+        "embedding_config_fingerprint",
+    )
     @classmethod
     def _validate_opt_strings(cls, value: str | None, info: ValidationInfo) -> str | None:
         return _validate_optional_str(value, field_name=f"BaselineEntry.{info.field_name}")
@@ -1388,6 +1430,107 @@ def _validate_optional_delta(value: Any, *, field_name: str) -> float | None:
     return rounded
 
 
+def _validate_optional_finite_float(value: Any, *, field_name: str) -> float | None:
+    if value is None:
+        return None
+    _reject_bool_number(value, field_name=field_name)
+    return round_delta(float(value))
+
+
+class StatisticalSummary(_StrictModel):
+    """Immutable distributional dispersion, CI, and hypothesis-test evidence."""
+
+    method: StatisticalMethod
+    confidence_level: float = Field(default=0.95, gt=0.0, lt=1.0)
+    sample_size: int = Field(ge=0)
+    baseline_sample_size: int = Field(ge=0)
+    candidate_sample_size: int = Field(ge=0)
+    excluded_pair_count: int = Field(default=0, ge=0)
+    mean_delta: float | None = Field(default=None, ge=-1.0, le=1.0)
+    delta_std: float | None = Field(default=None, ge=0.0)
+    standard_error: float | None = Field(default=None, ge=0.0)
+    baseline_std: float | None = Field(default=None, ge=0.0)
+    candidate_std: float | None = Field(default=None, ge=0.0)
+    ci_low: float | None = Field(default=None, ge=-1.0, le=1.0)
+    ci_high: float | None = Field(default=None, ge=-1.0, le=1.0)
+    p_value: float | None = Field(default=None, ge=0.0, le=1.0)
+    effect_size: float | None = None
+    degrees_of_freedom: float | None = Field(default=None, ge=0.0)
+    significance: SignificanceStatus
+    statistically_significant: bool = False
+    explanation: str = Field(min_length=1)
+
+    @field_validator("confidence_level", mode="before")
+    @classmethod
+    def _validate_conf(cls, value: Any) -> float:
+        _reject_bool_number(value, field_name="StatisticalSummary.confidence_level")
+        return round_score(float(value))
+
+    @field_validator(
+        "sample_size",
+        "baseline_sample_size",
+        "candidate_sample_size",
+        "excluded_pair_count",
+        mode="before",
+    )
+    @classmethod
+    def _validate_counts(cls, value: Any, info: ValidationInfo) -> int:
+        return _reject_strict_int(value, field_name=f"StatisticalSummary.{info.field_name}")
+
+    @field_validator("mean_delta", "ci_low", "ci_high", mode="before")
+    @classmethod
+    def _validate_deltas(cls, value: Any, info: ValidationInfo) -> float | None:
+        return _validate_optional_delta(value, field_name=f"StatisticalSummary.{info.field_name}")
+
+    @field_validator("p_value", mode="before")
+    @classmethod
+    def _validate_p_value(cls, value: Any) -> float | None:
+        return _validate_optional_bounded_score(value, field_name="StatisticalSummary.p_value")
+
+    @field_validator(
+        "delta_std",
+        "standard_error",
+        "baseline_std",
+        "candidate_std",
+        "effect_size",
+        "degrees_of_freedom",
+        mode="before",
+    )
+    @classmethod
+    def _validate_finite_stats(cls, value: Any, info: ValidationInfo) -> float | None:
+        return _validate_optional_finite_float(
+            value, field_name=f"StatisticalSummary.{info.field_name}"
+        )
+
+    @field_validator("explanation")
+    @classmethod
+    def _validate_explanation(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="StatisticalSummary.explanation")
+
+
+class RunCohortSummary(_StrictModel):
+    """Provenance record for multi-run baseline/candidate cohorts."""
+
+    baseline_run_ids: list[str] = Field(min_length=1)
+    candidate_run_ids: list[str] = Field(min_length=1)
+    baseline_run_count: int = Field(ge=1)
+    candidate_run_count: int = Field(ge=1)
+    baseline_names: list[str] = Field(default_factory=list)
+
+    @field_validator("baseline_run_ids", "candidate_run_ids", "baseline_names")
+    @classmethod
+    def _validate_str_lists(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        return [
+            _ensure_non_empty_str(item, field_name=f"RunCohortSummary.{info.field_name}")
+            for item in value
+        ]
+
+    @field_validator("baseline_run_count", "candidate_run_count", mode="before")
+    @classmethod
+    def _validate_run_counts(cls, value: Any, info: ValidationInfo) -> int:
+        return _reject_strict_int(value, field_name=f"RunCohortSummary.{info.field_name}")
+
+
 class MetricComparison(_StrictModel):
     """Aggregate metric comparison between baseline and candidate runs."""
 
@@ -1399,6 +1542,8 @@ class MetricComparison(_StrictModel):
     delta: float | None = Field(default=None, ge=-1.0, le=1.0)
     direction: ComparisonDirection
     status_count_deltas: dict[MetricStatus, int] = Field(default_factory=dict)
+    statistics: StatisticalSummary | None = None
+    case_statistics: StatisticalSummary | None = None
 
     @field_validator("metric_id")
     @classmethod
@@ -1510,6 +1655,7 @@ class RunComparisonReport(_StrictModel):
     mandatory_regressed_case_ids: list[str] = Field(default_factory=list)
     drift_warnings: list[DriftWarning] = Field(default_factory=list)
     anomalies: list[AnomalyFlag] = Field(default_factory=list)
+    cohort: RunCohortSummary | None = None
 
     @field_validator("baseline_run_id", "candidate_run_id")
     @classmethod
@@ -1726,6 +1872,7 @@ class QualityGateResult(_StrictModel):
     warning_reasons: list[str] = Field(default_factory=list)
     drift_warnings: list[DriftWarning] = Field(default_factory=list)
     anomalies: list[AnomalyFlag] = Field(default_factory=list)
+    cohort: RunCohortSummary | None = None
     summary: str = Field(min_length=1)
 
     @field_validator("candidate_run_id", "summary")
@@ -1875,6 +2022,74 @@ class JudgeConfig(_StrictModel):
     @property
     def fingerprint(self) -> str:
         """Compute deterministic canonical SHA-256 over redacted judge configuration."""
+        return canonical_sha256(self.redacted_dict())
+
+
+class EmbeddingConfig(_StrictModel):
+    """Secret-free, canonical configuration for embedding similarity metrics."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    model: str = Field(default="mock-embedding", min_length=1)
+    api_base: str | None = None
+    pass_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    aggregation: EmbeddingAggregation = EmbeddingAggregation.MAX
+    max_retries: int = Field(default=2, ge=0, le=10)
+    retry_backoff_seconds: float = Field(default=0.5, ge=0.0, le=60.0)
+    timeout_seconds: float = Field(default=30.0, gt=0.0, le=600.0)
+    max_input_chars: int | None = Field(default=None, gt=0)
+    local_only: bool = False
+    mock_mode: bool = False
+    extra_params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("model")
+    @classmethod
+    def _validate_model(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="EmbeddingConfig.model")
+
+    @field_validator("api_base")
+    @classmethod
+    def _validate_api_base(cls, value: str | None) -> str | None:
+        return _validate_http_api_base(value, field_name="EmbeddingConfig.api_base")
+
+    @field_validator("retry_backoff_seconds", "timeout_seconds", mode="before")
+    @classmethod
+    def _validate_float_params(cls, value: Any, info: ValidationInfo) -> Any:
+        _reject_bool_number(value, field_name=f"EmbeddingConfig.{info.field_name}")
+        return value
+
+    @field_validator("pass_threshold", mode="before")
+    @classmethod
+    def _validate_pass_threshold(cls, value: Any) -> float:
+        _reject_bool_number(value, field_name="EmbeddingConfig.pass_threshold")
+        return round_score(float(value))
+
+    @field_validator("max_retries", "max_input_chars", mode="before")
+    @classmethod
+    def _validate_int_params(cls, value: Any, info: ValidationInfo) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name=f"EmbeddingConfig.{info.field_name}")
+
+    @field_validator("extra_params")
+    @classmethod
+    def _validate_extra_params(cls, value: dict[str, Any]) -> dict[str, Any]:
+        checked = _ensure_json_serializable(value, field_name="EmbeddingConfig.extra_params")
+        sanitized = redact_secrets(checked)
+        if not isinstance(sanitized, dict):  # pragma: no cover - defensive guard
+            raise ValueError("EmbeddingConfig.extra_params must be a JSON object")
+        return sanitized
+
+    def redacted_dict(self) -> dict[str, Any]:
+        """Return redacted canonical dictionary representation safe for persistence."""
+        payload = self.model_dump(mode="json")
+        sanitized = redact_secrets(payload)
+        if not isinstance(sanitized, dict):  # pragma: no cover - defensive guard
+            raise ValueError("EmbeddingConfig redacted payload must be a dict")
+        return sanitized
+
+    @property
+    def fingerprint(self) -> str:
+        """Compute deterministic canonical SHA-256 over redacted embedding configuration."""
         return canonical_sha256(self.redacted_dict())
 
 
@@ -2119,10 +2334,6 @@ class AsyncBatchMetric(Protocol):
     def metadata(self) -> MetricMetadata:
         """Return formal metric metadata declaration."""
 
-    @property
-    def judge_config_fingerprint(self) -> str | None:
-        """Return canonical SHA-256 provenance fingerprint for this metric configuration."""
-
     def evaluate(
         self,
         case: EvaluationCase,
@@ -2292,6 +2503,51 @@ class ResolvedJudgeSettings(_StrictModel):
         return _reject_strict_int(value, field_name=f"ResolvedJudgeSettings.{info.field_name}")
 
 
+class ResolvedEmbeddingSettings(_StrictModel):
+    """Secret-free embedding runtime settings resolved across CLI configuration tiers."""
+
+    model: str = Field(default="mock-embedding", min_length=1)
+    api_base: str | None = None
+    api_key_configured: bool = False
+    pass_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    aggregation: EmbeddingAggregation = EmbeddingAggregation.MAX
+    max_retries: int = Field(default=2, ge=0, le=10)
+    retry_backoff_seconds: float = Field(default=0.5, ge=0.0, le=60.0)
+    timeout_seconds: float = Field(default=30.0, gt=0.0, le=600.0)
+    max_input_chars: int | None = Field(default=None, gt=0)
+    mock_mode: bool = False
+    local_only: bool = False
+
+    @field_validator("model")
+    @classmethod
+    def _validate_model(cls, value: str) -> str:
+        return _ensure_non_empty_str(value, field_name="ResolvedEmbeddingSettings.model")
+
+    @field_validator("api_base")
+    @classmethod
+    def _validate_api_base(cls, value: str | None) -> str | None:
+        return _validate_http_api_base(value, field_name="ResolvedEmbeddingSettings.api_base")
+
+    @field_validator("retry_backoff_seconds", "timeout_seconds", mode="before")
+    @classmethod
+    def _validate_float_params(cls, value: Any, info: ValidationInfo) -> Any:
+        _reject_bool_number(value, field_name=f"ResolvedEmbeddingSettings.{info.field_name}")
+        return value
+
+    @field_validator("pass_threshold", mode="before")
+    @classmethod
+    def _validate_pass_threshold(cls, value: Any) -> float:
+        _reject_bool_number(value, field_name="ResolvedEmbeddingSettings.pass_threshold")
+        return round_score(float(value))
+
+    @field_validator("max_retries", "max_input_chars", mode="before")
+    @classmethod
+    def _validate_int_params(cls, value: Any, info: ValidationInfo) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name=f"ResolvedEmbeddingSettings.{info.field_name}")
+
+
 class ResolvedLoggingConfig(_StrictModel):
     """Resolved CLI stderr diagnostic verbosity and structured logging mode."""
 
@@ -2340,13 +2596,16 @@ class CLIResolvedConfig(_StrictModel):
     dataset_version: str | None = None
     executions_path: str | None = None
     run_id: str | None = None
+    repeats: int = Field(default=1, ge=1, le=100)
     baseline: str | None = None
+    baseline_runs: list[str] = Field(default_factory=list)
     trend_window: int | None = Field(default=None, ge=2)
     strict: bool = False
     target: ResolvedTargetConfig = Field(default_factory=ResolvedTargetConfig)
     metrics: list[MetricSpecConfig] = Field(default_factory=list)
     execution: OrchestratorConfig = Field(default_factory=OrchestratorConfig)
     judge: ResolvedJudgeSettings = Field(default_factory=ResolvedJudgeSettings)
+    embedding: ResolvedEmbeddingSettings = Field(default_factory=ResolvedEmbeddingSettings)
     security: ResolvedSecurityConfig = Field(default_factory=ResolvedSecurityConfig)
     gate: QualityGatePolicy = Field(default_factory=QualityGatePolicy)
     logging: ResolvedLoggingConfig = Field(default_factory=ResolvedLoggingConfig)
@@ -2371,12 +2630,25 @@ class CLIResolvedConfig(_StrictModel):
     def _validate_opt_fields(cls, value: str | None, info: ValidationInfo) -> str | None:
         return _validate_optional_str(value, field_name=f"CLIResolvedConfig.{info.field_name}")
 
+    @field_validator("baseline_runs")
+    @classmethod
+    def _validate_baseline_runs(cls, value: list[str]) -> list[str]:
+        return [
+            _ensure_non_empty_str(item, field_name="CLIResolvedConfig.baseline_runs")
+            for item in value
+        ]
+
     @field_validator("trend_window", mode="before")
     @classmethod
     def _validate_trend_window(cls, value: Any) -> int | None:
         if value is None:
             return None
         return _reject_strict_int(value, field_name="CLIResolvedConfig.trend_window")
+
+    @field_validator("repeats", mode="before")
+    @classmethod
+    def _validate_repeats(cls, value: Any) -> int:
+        return _reject_strict_int(value, field_name="CLIResolvedConfig.repeats")
 
 
 class DecoupledEvidenceDiagnostic(_StrictModel):
@@ -2470,6 +2742,16 @@ class ReportDocument(_StrictModel):
     gate: QualityGateResult | None = None
     calibration_gate: CalibrationGateSummary | None = None
     diagnostics: ReportDiagnosticsSummary = Field(default_factory=ReportDiagnosticsSummary)
+    cohort_run_ids: list[str] = Field(default_factory=list)
+    cohort_aggregates: dict[str, AggregateMetricSummary] = Field(default_factory=dict)
+
+    @field_validator("cohort_run_ids")
+    @classmethod
+    def _validate_cohort_run_ids(cls, value: list[str]) -> list[str]:
+        return [
+            _ensure_non_empty_str(item, field_name="ReportDocument.cohort_run_ids")
+            for item in value
+        ]
 
     @field_validator("title")
     @classmethod

@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from evalforge_maestro._locality import is_remote_endpoint, validate_local_only_endpoint
 from evalforge_maestro.adapters import (
     AgentAdapter,
     CallableAdapter,
@@ -17,6 +18,11 @@ from evalforge_maestro.adapters import (
 )
 from evalforge_maestro.cli.logging_utils import CLIStructuredLogger
 from evalforge_maestro.datasets import DatasetEngine
+from evalforge_maestro.embeddings import (
+    ContextEmbeddingSimilarityMetric,
+    EmbeddingSimilarityMetric,
+)
+from evalforge_maestro.embeddings.provider import wrap_pii_guarded_embedding_metric
 from evalforge_maestro.exceptions import ConfigurationError
 from evalforge_maestro.judges.base import BaseJudgeMetric
 from evalforge_maestro.judges.metrics import (
@@ -51,6 +57,8 @@ from evalforge_maestro.metrics import (
 from evalforge_maestro.types import (
     AgentExtractorConfig,
     CLIResolvedConfig,
+    EmbeddingAggregation,
+    EmbeddingConfig,
     JudgeConfig,
     Metric,
     MetricSpecConfig,
@@ -58,6 +66,8 @@ from evalforge_maestro.types import (
     TargetAdapter,
     TargetType,
 )
+
+_EMBEDDING_METRIC_IDS = frozenset({"embedding_similarity", "context_embedding_similarity"})
 
 _SIMPLE_JUDGE_FACTORIES: dict[str, Callable[..., BaseJudgeMetric]] = {
     "groundedness": GroundednessMetric,
@@ -146,11 +156,61 @@ def _build_judge_config(
     )
 
 
+def _build_embedding_config(
+    spec: MetricSpecConfig,
+    resolved: CLIResolvedConfig,
+) -> EmbeddingConfig:
+    emb = resolved.embedding
+    allowed_keys = {
+        "model",
+        "api_base",
+        "pass_threshold",
+        "threshold",
+        "max_input_chars",
+    }
+    if spec.metric_id == "context_embedding_similarity":
+        allowed_keys.add("aggregation")
+    unknown = set(spec.params) - allowed_keys
+    if unknown:
+        raise ConfigurationError(
+            f"Unsupported parameter(s) for embedding metric {spec.metric_id!r}: {sorted(unknown)}"
+        )
+    pass_threshold = spec.params.get(
+        "pass_threshold",
+        spec.params.get("threshold", emb.pass_threshold),
+    )
+    raw_agg = spec.params.get("aggregation", emb.aggregation)
+    aggregation = (
+        raw_agg
+        if isinstance(raw_agg, EmbeddingAggregation)
+        else EmbeddingAggregation(str(raw_agg).strip().lower())
+    )
+    default_max_chars = (
+        emb.max_input_chars
+        if emb.max_input_chars is not None
+        else resolved.execution.max_context_chars
+    )
+    max_input_chars = spec.params.get("max_input_chars", default_max_chars)
+    return EmbeddingConfig(
+        model=str(spec.params.get("model", emb.model)),
+        api_base=spec.params.get("api_base", emb.api_base),
+        pass_threshold=pass_threshold,
+        aggregation=aggregation,
+        max_retries=emb.max_retries,
+        retry_backoff_seconds=emb.retry_backoff_seconds,
+        timeout_seconds=emb.timeout_seconds,
+        max_input_chars=max_input_chars,
+        local_only=resolved.security.local_only or emb.local_only,
+        mock_mode=emb.mock_mode,
+    )
+
+
 def _construct_single_metric(
     spec: MetricSpecConfig,
     resolved: CLIResolvedConfig,
     *,
     raw_api_key: str | None,
+    raw_embedding_api_key: str | None = None,
 ) -> Any:
     mid = spec.metric_id
     params = _normalized_threshold_params(spec.params)
@@ -163,6 +223,22 @@ def _construct_single_metric(
         if topk_factory is not None:
             k_val = params.pop("k", 5)
             return topk_factory(k_val, **params)
+        if mid in _EMBEDDING_METRIC_IDS:
+            emb_cfg = _build_embedding_config(spec, resolved)
+            if mid == "embedding_similarity":
+                emb_metric: Any = EmbeddingSimilarityMetric(
+                    config=emb_cfg,
+                    api_key=raw_embedding_api_key,
+                )
+            else:
+                emb_metric = ContextEmbeddingSimilarityMetric(
+                    config=emb_cfg,
+                    api_key=raw_embedding_api_key,
+                )
+            return wrap_pii_guarded_embedding_metric(
+                emb_metric,
+                block_pii=resolved.security.block_pii,
+            )
         if mid in _SIMPLE_JUDGE_FACTORIES:
             allowed_judge_keys = {
                 "model",
@@ -216,6 +292,7 @@ def build_metrics_from_config(
     resolved: CLIResolvedConfig,
     *,
     raw_api_key: str | None,
+    raw_embedding_api_key: str | None = None,
 ) -> list[Metric]:
     """Instantiate configured metrics for `run`, rejecting empty or unknown definitions."""
     if not resolved.metrics:
@@ -224,7 +301,14 @@ def build_metrics_from_config(
         )
     built: list[Metric] = []
     for spec in resolved.metrics:
-        built.append(_construct_single_metric(spec, resolved, raw_api_key=raw_api_key))
+        built.append(
+            _construct_single_metric(
+                spec,
+                resolved,
+                raw_api_key=raw_api_key,
+                raw_embedding_api_key=raw_embedding_api_key,
+            )
+        )
     return built
 
 
@@ -436,12 +520,28 @@ def preflight_run_security(
 ) -> None:
     """Enforce --local-only endpoint locality and opt-in --block-pii pre-network checks."""
     any_remote_judge = False
+    any_remote_embedding = False
     for metric in metrics:
         judge_cfg = getattr(metric, "judge_config", None)
         if isinstance(judge_cfg, JudgeConfig):
             validate_local_only_target(judge_cfg)
             if is_remote_judge_endpoint(judge_cfg):
                 any_remote_judge = True
+        emb_cfg = getattr(metric, "embedding_config", None)
+        if isinstance(emb_cfg, EmbeddingConfig):
+            validate_local_only_endpoint(
+                local_only=emb_cfg.local_only,
+                mock_mode=emb_cfg.mock_mode,
+                model=emb_cfg.model,
+                api_base=emb_cfg.api_base,
+                label="embedding",
+            )
+            if is_remote_endpoint(
+                model=emb_cfg.model,
+                api_base=emb_cfg.api_base,
+                mock_mode=emb_cfg.mock_mode,
+            ):
+                any_remote_embedding = True
 
     t_cfg = resolved.target
     if resolved.security.local_only and t_cfg.target_type == TargetType.DOCPIPE:
@@ -451,9 +551,13 @@ def preflight_run_security(
         elif t_cfg.docpipe_api_base is not None:
             _validate_docpipe_locality(None, api_base=t_cfg.docpipe_api_base)
 
-    if resolved.security.block_pii and not resolved.judge.mock_mode:
+    if resolved.security.block_pii:
         is_remote_docpipe = False
-        if not resolved.security.local_only and t_cfg.target_type == TargetType.DOCPIPE:
+        if (
+            not resolved.judge.mock_mode
+            and not resolved.security.local_only
+            and t_cfg.target_type == TargetType.DOCPIPE
+        ):
             is_remote_docpipe = _docpipe_endpoint_is_remote(t_cfg.docpipe_embed_model) or (
                 t_cfg.docpipe_mode == "answer_detailed"
                 and (
@@ -464,7 +568,11 @@ def preflight_run_security(
                     )
                 )
             )
-        if any_remote_judge or is_remote_docpipe:
+        if (
+            (any_remote_judge and not resolved.judge.mock_mode)
+            or is_remote_docpipe
+            or (any_remote_embedding and not resolved.embedding.mock_mode)
+        ):
             for case in dataset.iter_cases(max_cases=resolved.execution.max_dataset_cases):
                 validate_pii_egress(
                     {

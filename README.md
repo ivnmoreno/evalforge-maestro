@@ -12,6 +12,8 @@ pip install evalforge-maestro
 pip install "evalforge-maestro[docpipe]"
 # With optional LiteLLM model-based judges:
 pip install "evalforge-maestro[judges]"
+# With optional dense embedding similarity metrics (numpy + litellm):
+pip install "evalforge-maestro[embeddings]"
 ```
 
 For contributor development using [`uv`](https://docs.astral.sh/uv/):
@@ -35,11 +37,30 @@ evalforge-maestro run \
   --json-out report.json \
   --markdown-out report.md
 
+# Run repeatable multi-trial cohort evaluation with statistical significance checks
+evalforge-maestro run \
+  --config examples/ci/evalforge.toml \
+  --repeats 3 \
+  --seed 10 \
+  --baseline release-v1 \
+  --fail-on-significant-regression \
+  --json
+
+# Run offline embedding similarity metrics (requires evalforge-maestro[embeddings])
+evalforge-maestro run \
+  --config examples/ci/evalforge.toml \
+  --metric embedding_similarity \
+  --metric context_embedding_similarity:aggregation=mean \
+  --mock \
+  --local-only \
+  --json
+
 # Pin a trusted baseline without mutating immutable run records
 evalforge-maestro baseline set <RUN_ID> --name release-v1 --json
 
-# Compare a candidate run against a pinned baseline
+# Compare candidate run(s) against pinned or run baseline cohort(s)
 evalforge-maestro compare <CANDIDATE_RUN_ID> --baseline release-v1 --strict --json
+evalforge-maestro compare <CAND_R01> <CAND_R02> --baseline release-v1 --baseline-run <BASE_R02> --fail-on-significant-regression --json
 
 # Inspect multi-run sliding OLS trends
 evalforge-maestro trend --window 5 --json
@@ -107,7 +128,7 @@ print(run.aggregates["recall_at_k"].mean_score)
 
 Copy [`examples/ci/evalforge-ci.yml`](examples/ci/evalforge-ci.yml) and [`examples/ci/evalforge.toml`](examples/ci/evalforge.toml) (for offline `--executions` replay) or [`examples/ci/evalforge-docpipe.toml`](examples/ci/evalforge-docpipe.toml) (for `[docpipe]` retrieval gating) into your project to gate pull requests offline (`--mock --local-only`) and publish Markdown summaries directly to `$GITHUB_STEP_SUMMARY`. See [`examples/ci/README.md`](examples/ci/README.md) for consumer setup details.
 
-## Implemented Milestones (M1–M6)
+## Implemented Milestones (M1–M6 + Post-M6 Extensions)
 
 - **M1 — Evaluation Foundation (`001-evaluation-foundation`)**: Single Pydantic v2 schema source (`evalforge_maestro.types`), lazy JSONL streaming `DatasetEngine`, `CallableAdapter`, deterministic text/JSON Schema metrics (`exact_match`, `normalized_match`, `json_schema_validation`), bounded async `EvaluationOrchestrator`, and atomic `0o700`/`0o600` `.evalforge/` storage.
 - **M2 — Retrieval & RAG Evaluation (`002-retrieval-rag-evaluation`)**: Protocol-based `RAGAdapter`, lazy `DocpipeAdapter` (`[docpipe]`), dependency-free fixture importer, and versioned IR metrics (`precision_at_k`, `recall_at_k`, `mrr`, `ndcg_at_k`, `hit_rate_at_k`) with AST formula verification.
@@ -115,6 +136,7 @@ Copy [`examples/ci/evalforge-ci.yml`](examples/ci/evalforge-ci.yml) and [`exampl
 - **M4 — Model-Based Judge & Calibration Engine (`004-judge-calibration-engine`)**: Lazy LiteLLM gateway (`[judges]`), pre-network `--local-only` & `LITELLM_LOCAL_MODEL_COST_MAP` air-gap safety, randomized XML/nonce prompt-injection delimiting, offline `--mock` scoring, context-grouped bounded async batching, and human calibration (`calibrate_judge` / `CalibrationReport`).
 - **M5 — CLI, Reporting & CI Integration (`005-cli-reporting-ci`)**: Dual CLI entrypoints (`evalforge-maestro` / `evalforge_maestro`) with seven subcommands (`run`, `compare`, `trend`, `calibrate`, `baseline`, `report`, `config`), offline `ReplayAdapter`, opt-in `--block-pii` egress guard, library-pure `evalforge_maestro.reporting` (`ReportDocument` JSON & Three-Way Markdown separating Evaluation, Regression, and Quality Gate + retrieval-vs-answer decoupling diagnostics), and copy-ready CI workflow templates.
 - **M6 — Agent Trace Evaluation (`006-agent-trace-evaluation`)**: Backward-compatible typed trace/tool contracts (`ExpectedToolCall`, `ToolCallRecord`, `AgentTraceStep`), six `100%`-branch-covered deterministic agent metrics (`tool_selection`, `argument_correctness`, `execution_sequence`, `tool_efficiency`, `policy_compliance`, `failure_recovery`), dependency-free `AgentAdapter` + structural OpenAI/Anthropic trace normalizers, CLI `--target-type agent` support, field-level post-scoring `max_context_chars` trace truncation, and decoupled trace-vs-answer diagnostics.
+- **Statistical & Embedding Metrics (`007-statistical-embedding-metrics`)**: Lazy `[embeddings]` extra (`numpy` + `litellm`) powering `EmbeddingSimilarityMetric` and `ContextEmbeddingSimilarityMetric` with strict `[judge]`/`[embedding]` isolation, SHA-256 `--mock` fallback, pre-network `--local-only` / `--block-pii` checks, pure-stdlib Student's $t$ / Welch's $t$ / one-sample $t$ confidence intervals and $p$-values (`compare_runs`, `compare_run_cohorts`, `build_pooled_cohort_run`), `--repeats` immutable cohorts, and `QualityGate.evaluate_cohort` (`fail_on_significant_regression`).
 
 ## CI/CD & PyPI Trusted Publishing Setup
 

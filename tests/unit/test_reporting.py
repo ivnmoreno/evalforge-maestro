@@ -37,8 +37,12 @@ from evalforge_maestro.types import (
     MetricTrendSummary,
     QualityGateResult,
     RetrievedChunk,
+    RunCohortSummary,
     RunComparisonReport,
     RunRecord,
+    SignificanceStatus,
+    StatisticalMethod,
+    StatisticalSummary,
     TargetChangeSummary,
     ToolCallRecord,
     ToolCallStatus,
@@ -429,3 +433,60 @@ def test_detect_decoupled_agent_trace_vs_answer_diagnostics_and_markdown() -> No
     assert "agent_trace_passed_answer_failed" in md
     assert "delete_user" in md
     assert "sk-topsecret-agent-token99" not in md
+
+
+def test_markdown_renders_statistical_ci_dispersion_and_cohort_summary() -> None:
+    stat = StatisticalSummary(
+        method=StatisticalMethod.WELCH_T_RUN,
+        confidence_level=0.95,
+        sample_size=3,
+        baseline_sample_size=3,
+        candidate_sample_size=3,
+        mean_delta=-0.15,
+        delta_std=0.04,
+        standard_error=0.023094,
+        baseline_std=0.02,
+        candidate_std=0.03,
+        ci_low=-0.214,
+        ci_high=-0.086,
+        p_value=0.0021,
+        effect_size=-5.883484,
+        degrees_of_freedom=3.4,
+        significance=SignificanceStatus.SIGNIFICANT_REGRESSION,
+        statistically_significant=True,
+        explanation="Significant regression across 3v3 runs.",
+    )
+    comparison = RunComparisonReport(
+        baseline_run_id="base-r03",
+        candidate_run_id="cand-r03",
+        baseline_name="v1-cohort",
+        target_changes=TargetChangeSummary(),
+        metric_comparisons={
+            "exact_match": MetricComparison(
+                metric_id="exact_match",
+                baseline_score=0.9,
+                candidate_score=0.75,
+                delta=-0.15,
+                direction=ComparisonDirection.REGRESSED,
+                statistics=stat,
+            )
+        },
+        case_comparisons=[],
+        matched_case_count=10,
+        cohort=RunCohortSummary(
+            baseline_run_ids=["base-r01", "base-r02", "base-r03"],
+            candidate_run_ids=["cand-r01", "cand-r02", "cand-r03"],
+            baseline_run_count=3,
+            candidate_run_count=3,
+            baseline_names=["v1-cohort"],
+        ),
+    )
+    doc = build_comparison_report(comparison)
+    md = render_markdown(doc)
+    assert "Cohort" in md
+    assert "3 baseline" in md or "baseline=3" in md
+    assert "significant_regression" in md
+    assert "-0.214" in md and "-0.086" in md
+    assert "0.0021" in md
+    assert "0.02" in md and "0.03" in md
+    assert "welch_t_run" in md

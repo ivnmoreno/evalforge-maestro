@@ -141,7 +141,13 @@ def test_m6_runtime_models_validate_against_contract_schemas() -> None:
         ),
         metrics=[MetricSpecConfig(metric_id="tool_selection")],
     )
-    _validate_def(merged, "CLIResolvedConfig", cfg.model_dump(mode="json"))
+    cfg_m6 = cfg.model_dump(mode="json")
+    for k in ("repeats", "baseline_runs", "embedding"):
+        cfg_m6.pop(k, None)
+    cfg_m6["execution"].pop("embedding_config_fingerprint", None)
+    for k in ("confidence_level", "min_statistical_samples", "fail_on_significant_regression"):
+        cfg_m6["gate"].pop(k, None)
+    _validate_def(merged, "CLIResolvedConfig", cfg_m6)
 
     ext = AgentExtractorConfig(tool_calls="messages", output="answer")
     assert ext.tool_calls == "messages"
@@ -195,7 +201,11 @@ def test_m6_runtime_models_validate_against_contract_schemas() -> None:
         ],
     )
     report_doc = build_run_report(run)
-    _validate_def(merged, "ReportDocument", report_doc.model_dump(mode="json"))
+    report_m6 = report_doc.model_dump(mode="json")
+    for k in ("cohort_run_ids", "cohort_aggregates"):
+        report_m6.pop(k, None)
+    report_m6["evaluation"].pop("embedding_config_fingerprint", None)
+    _validate_def(merged, "ReportDocument", report_m6)
 
     diag = DecoupledEvidenceDiagnostic(
         case_id="agent-case-1",

@@ -207,11 +207,84 @@ def _add_run_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
     p.add_argument(
         "--judge-timeout", type=float, default=argparse.SUPPRESS, help="Judge timeout seconds."
     )
+    p.add_argument(
+        "--embedding-model",
+        default=argparse.SUPPRESS,
+        help="Embedding model identifier (isolated from [judge]).",
+    )
+    p.add_argument(
+        "--embedding-api-base",
+        default=argparse.SUPPRESS,
+        help="Embedding API base URL (isolated from [judge]).",
+    )
+    p.add_argument(
+        "--embedding-pass-threshold",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="Embedding metric pass threshold [0.0..1.0].",
+    )
+    p.add_argument(
+        "--embedding-aggregation",
+        choices=["max", "mean"],
+        default=argparse.SUPPRESS,
+        help="Context embedding chunk aggregation ('max' or 'mean').",
+    )
+    p.add_argument(
+        "--embedding-max-retries",
+        type=int,
+        default=argparse.SUPPRESS,
+        help="Embedding provider retry limit.",
+    )
+    p.add_argument(
+        "--embedding-timeout",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="Embedding provider timeout seconds.",
+    )
+    p.add_argument(
+        "--embedding-max-input-chars",
+        type=int,
+        default=argparse.SUPPRESS,
+        help="Pre-provider embedding text truncation limit in characters.",
+    )
     p.add_argument("--seed", type=int, default=argparse.SUPPRESS, help="Deterministic seed.")
+    p.add_argument(
+        "--repeats",
+        type=int,
+        default=argparse.SUPPRESS,
+        help="Number of immutable evaluation repeats to execute (>= 1).",
+    )
     p.add_argument(
         "--baseline",
         default=argparse.SUPPRESS,
         help="Explicit baseline run_id or pinned alias to compare against.",
+    )
+    p.add_argument(
+        "--baseline-run",
+        action="append",
+        default=argparse.SUPPRESS,
+        help=(
+            "Additional baseline run_id or pinned alias for multi-run cohort comparison. "
+            "Repeatable."
+        ),
+    )
+    p.add_argument(
+        "--confidence-level",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="Statistical CI confidence level in (0.0, 1.0) (default: 0.95).",
+    )
+    p.add_argument(
+        "--min-statistical-samples",
+        type=int,
+        default=argparse.SUPPRESS,
+        help="Minimum paired cases / runs per cohort for significance testing (>= 2).",
+    )
+    p.add_argument(
+        "--fail-on-significant-regression",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Escalate statistically significant regressions to QualityGate FAIL.",
     )
     p.add_argument(
         "--trend-window",
@@ -270,15 +343,44 @@ def _add_run_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
 def _add_compare_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
     p = subparsers.add_parser(
         "compare",
-        help="Compare a candidate run against a baseline run ID or pinned alias.",
+        help="Compare candidate run(s) against baseline run ID(s) or pinned alias(es).",
     )
     _add_global_flags(p)
     _add_export_flags(p)
-    p.add_argument("candidate_run_id", help="Candidate RunRecord ID.")
+    p.add_argument(
+        "candidate_run_ids",
+        nargs="+",
+        metavar="candidate_run_id",
+        help="One or more candidate RunRecord IDs.",
+    )
     p.add_argument(
         "--baseline",
         default=argparse.SUPPRESS,
         help="Baseline run ID or pinned baseline alias.",
+    )
+    p.add_argument(
+        "--baseline-run",
+        action="append",
+        default=argparse.SUPPRESS,
+        help="Additional baseline run ID or pinned alias for multi-run cohort comparison.",
+    )
+    p.add_argument(
+        "--confidence-level",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="Statistical CI confidence level in (0.0, 1.0) (default: 0.95).",
+    )
+    p.add_argument(
+        "--min-statistical-samples",
+        type=int,
+        default=argparse.SUPPRESS,
+        help="Minimum paired cases / runs per cohort for significance testing (>= 2).",
+    )
+    p.add_argument(
+        "--fail-on-significant-regression",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Escalate statistically significant regressions to QualityGate FAIL.",
     )
     p.add_argument(
         "--strict",

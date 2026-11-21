@@ -136,6 +136,8 @@ jobs:
 
           assert "docpipe_maestro" not in sys.modules
           assert "litellm" not in sys.modules
+          assert "numpy" not in sys.modules
+          assert "scipy" not in sys.modules
           assert "tomllib" not in sys.modules
           assert "tomli" not in sys.modules
           try:
@@ -150,7 +152,7 @@ jobs:
                   model="openai/gpt-4o-mini", local_only=False, mock_mode=False
               )
           )
-          case = evalforge_maestro.EvaluationCase(id="ci-1", input="SLA?")
+          case = evalforge_maestro.EvaluationCase(id="ci-1", input="SLA?", reference="99.9%")
           exec_res = evalforge_maestro.ExecutionResult(
               case_id="ci-1",
               input="SLA?",
@@ -164,6 +166,18 @@ jobs:
               assert "judges" in str(exc)
           else:
               raise AssertionError("Expected MissingExtraError for judges")
+
+          emb = evalforge_maestro.EmbeddingSimilarityMetric(
+              config=evalforge_maestro.EmbeddingConfig(
+                  model="mock-embedding", local_only=True, mock_mode=True
+              )
+          )
+          try:
+              emb.evaluate(case, exec_res)
+          except evalforge_maestro.MissingExtraError as exc:
+              assert "embeddings" in str(exc)
+          else:
+              raise AssertionError("Expected MissingExtraError for embeddings")
           PY
           "$VENV_CLI" run --config examples/ci/evalforge.toml --storage-dir "$RUNNER_TEMP/clean-wheel-store" --mock --local-only --strict --json >/dev/null
 
@@ -181,6 +195,8 @@ jobs:
 
           assert "docpipe_maestro" not in sys.modules
           assert "litellm" not in sys.modules
+          assert "numpy" not in sys.modules
+          assert "scipy" not in sys.modules
           PY
 
   optional-docpipe-compat:
@@ -234,5 +250,45 @@ jobs:
           mod = _resolve_litellm(local_only=True)
           assert os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP") == "True"
           assert mod is not None and "litellm" in sys.modules
+          PY
+          uv run pip-audit
+
+  optional-embeddings-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Sync with [embeddings] extra and verify lazy resolution, air-gap safety & purity
+        run: |
+          uv sync --frozen --extra dev --extra embeddings
+          uv run pytest --strict-markers -W error tests/test_library_purity.py tests/unit/test_embedding_metrics.py tests/unit/test_embedding_provider.py tests/integration/test_statistical_embedding_pipeline.py
+          uv run python - <<'PY'
+          import os
+          import socket
+          import sys
+          import evalforge_maestro
+          from evalforge_maestro.embeddings.provider import resolve_litellm, resolve_numpy
+
+          assert "numpy" not in sys.modules
+          assert "scipy" not in sys.modules
+          assert "litellm" not in sys.modules
+
+          def _blocked(*args, **kwargs):
+              raise RuntimeError("Network forbidden during air-gap litellm import")
+
+          socket.socket.connect = _blocked  # type: ignore[method-assign]
+          socket.create_connection = _blocked  # type: ignore[assignment]
+          np_mod = resolve_numpy()
+          litellm_mod = resolve_litellm(local_only=True)
+          assert os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP") == "True"
+          assert np_mod is not None and "numpy" in sys.modules
+          assert litellm_mod is not None and "litellm" in sys.modules
           PY
           uv run pip-audit

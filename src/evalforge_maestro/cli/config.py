@@ -24,9 +24,11 @@ from evalforge_maestro.types import (
     CLIResolvedConfig,
     ConfigSettingProvenance,
     ConfigSourceTier,
+    EmbeddingAggregation,
     MetricSpecConfig,
     OrchestratorConfig,
     QualityGatePolicy,
+    ResolvedEmbeddingSettings,
     ResolvedJudgeSettings,
     ResolvedLoggingConfig,
     ResolvedSecurityConfig,
@@ -50,7 +52,9 @@ class _TomlRunSection(_TomlStrictSection):
     dataset_version: str | None = None
     executions: str | None = None
     run_id: str | None = None
+    repeats: int | None = None
     baseline: str | None = None
+    baseline_runs: list[str] | None = None
     trend_window: int | None = None
     strict: bool | None = None
     max_concurrency: int | None = None
@@ -99,6 +103,20 @@ class _TomlJudgeSection(_TomlStrictSection):
     min_agreement: float | None = None
 
 
+class _TomlEmbeddingSection(_TomlStrictSection):
+    model: str | None = None
+    api_base: str | None = None
+    api_key: str | None = None
+    pass_threshold: float | None = None
+    aggregation: str | None = None
+    max_retries: int | None = None
+    retry_backoff_seconds: float | None = None
+    timeout_seconds: float | None = None
+    max_input_chars: int | None = None
+    mock_mode: bool | None = None
+    local_only: bool | None = None
+
+
 class _TomlSecuritySection(_TomlStrictSection):
     local_only: bool | None = None
     block_pii: bool | None = None
@@ -122,6 +140,9 @@ class _TomlGateSection(_TomlStrictSection):
     fail_on_anomaly: bool | None = None
     fail_on_degrading_trend: bool | None = None
     fail_on_mandatory_regression: bool | None = None
+    confidence_level: float | None = None
+    min_statistical_samples: int | None = None
+    fail_on_significant_regression: bool | None = None
 
 
 class _TomlLoggingSection(_TomlStrictSection):
@@ -134,6 +155,7 @@ class _TomlRootConfig(_TomlStrictSection):
     target: _TomlTargetSection | None = None
     metrics: dict[str, Any] | None = None
     judge: _TomlJudgeSection | None = None
+    embedding: _TomlEmbeddingSection | None = None
     security: _TomlSecuritySection | None = None
     gate: _TomlGateSection | None = None
     logging: _TomlLoggingSection | None = None
@@ -430,6 +452,8 @@ class _TierLookup:
             return _parse_int_env(raw, var_name=var_name)
         if kind == "float":
             return _parse_float_env(raw, var_name=var_name)
+        if kind == "str_list":
+            return [token.strip() for token in raw.split(",") if token.strip()]
         if kind == "json_float_map":
             try:
                 loaded = json.loads(raw)
@@ -812,6 +836,111 @@ def _resolve_judge_and_security(
     return judge_settings, security_cfg, raw_key_str
 
 
+def _resolve_embedding_section(
+    lookup: _TierLookup,
+    emb_sec: _TomlEmbeddingSection,
+    *,
+    security_local_only: bool,
+) -> tuple[ResolvedEmbeddingSettings, str | None]:
+    raw_emb_key = lookup.resolve(
+        "embedding.api_key",
+        cli_key="embedding_api_key",
+        env_var="EVALFORGE_EMBEDDING_API_KEY",
+        toml_val=emb_sec.api_key,
+    )
+    raw_emb_key_str = str(raw_emb_key).strip() if raw_emb_key else None
+    if raw_emb_key_str == "":
+        raw_emb_key_str = None
+
+    raw_agg = lookup.resolve(
+        "embedding.aggregation",
+        cli_key="embedding_aggregation",
+        env_var="EVALFORGE_EMBEDDING_AGGREGATION",
+        toml_val=emb_sec.aggregation,
+        default=EmbeddingAggregation.MAX.value,
+    )
+    aggregation = (
+        raw_agg
+        if isinstance(raw_agg, EmbeddingAggregation)
+        else EmbeddingAggregation(str(raw_agg).strip().lower())
+    )
+    emb_local_only = bool(
+        lookup.resolve(
+            "embedding.local_only",
+            cli_key="embedding_local_only",
+            env_var="EVALFORGE_EMBEDDING_LOCAL_ONLY",
+            env_parser="bool",
+            toml_val=emb_sec.local_only,
+            default=False,
+        )
+    )
+    settings = ResolvedEmbeddingSettings(
+        model=str(
+            lookup.resolve(
+                "embedding.model",
+                cli_key="embedding_model",
+                env_var="EVALFORGE_EMBEDDING_MODEL",
+                toml_val=emb_sec.model,
+                default="mock-embedding",
+            )
+        ),
+        api_base=lookup.resolve(
+            "embedding.api_base",
+            cli_key="embedding_api_base",
+            env_var="EVALFORGE_EMBEDDING_API_BASE",
+            toml_val=emb_sec.api_base,
+        ),
+        api_key_configured=raw_emb_key_str is not None,
+        pass_threshold=lookup.resolve(
+            "embedding.pass_threshold",
+            cli_key="embedding_pass_threshold",
+            env_var="EVALFORGE_EMBEDDING_PASS_THRESHOLD",
+            env_parser="float",
+            toml_val=emb_sec.pass_threshold,
+            default=0.5,
+        ),
+        aggregation=aggregation,
+        max_retries=lookup.resolve(
+            "embedding.max_retries",
+            cli_key="embedding_max_retries",
+            env_var="EVALFORGE_EMBEDDING_MAX_RETRIES",
+            env_parser="int",
+            toml_val=emb_sec.max_retries,
+            default=2,
+        ),
+        retry_backoff_seconds=(
+            emb_sec.retry_backoff_seconds if emb_sec.retry_backoff_seconds is not None else 0.5
+        ),
+        timeout_seconds=lookup.resolve(
+            "embedding.timeout_seconds",
+            cli_key="embedding_timeout",
+            env_var="EVALFORGE_EMBEDDING_TIMEOUT_SECONDS",
+            env_parser="float",
+            toml_val=emb_sec.timeout_seconds,
+            default=30.0,
+        ),
+        max_input_chars=lookup.resolve(
+            "embedding.max_input_chars",
+            cli_key="embedding_max_input_chars",
+            env_var="EVALFORGE_EMBEDDING_MAX_INPUT_CHARS",
+            env_parser="int",
+            toml_val=emb_sec.max_input_chars,
+        ),
+        mock_mode=bool(
+            lookup.resolve(
+                "embedding.mock_mode",
+                cli_key="mock",
+                env_var="EVALFORGE_MOCK",
+                env_parser="bool",
+                toml_val=emb_sec.mock_mode,
+                default=False,
+            )
+        ),
+        local_only=security_local_only or emb_local_only,
+    )
+    return settings, raw_emb_key_str
+
+
 def _resolve_gate_section(lookup: _TierLookup, gate_sec: _TomlGateSection) -> QualityGatePolicy:
     return QualityGatePolicy(
         min_score=lookup.resolve(
@@ -896,21 +1025,47 @@ def _resolve_gate_section(lookup: _TierLookup, gate_sec: _TomlGateSection) -> Qu
             if gate_sec.fail_on_mandatory_regression is not None
             else True
         ),
+        confidence_level=lookup.resolve(
+            "gate.confidence_level",
+            cli_key="confidence_level",
+            env_var="EVALFORGE_CONFIDENCE_LEVEL",
+            env_parser="float",
+            toml_val=gate_sec.confidence_level,
+            default=0.95,
+        ),
+        min_statistical_samples=lookup.resolve(
+            "gate.min_statistical_samples",
+            cli_key="min_statistical_samples",
+            env_var="EVALFORGE_MIN_STATISTICAL_SAMPLES",
+            env_parser="int",
+            toml_val=gate_sec.min_statistical_samples,
+            default=2,
+        ),
+        fail_on_significant_regression=bool(
+            lookup.resolve(
+                "gate.fail_on_significant_regression",
+                cli_key="fail_on_significant_regression",
+                env_var="EVALFORGE_FAIL_ON_SIGNIFICANT_REGRESSION",
+                env_parser="bool",
+                toml_val=gate_sec.fail_on_significant_regression,
+                default=False,
+            )
+        ),
     )
 
 
-def resolve_cli_config(
+def resolve_cli_config_with_secrets(
     *,
     cli_overrides: Mapping[str, Any] | None = None,
     config_path: str | Path | None = None,
     env_file: str | Path | None = None,
     cwd: Path | None = None,
     environ: Mapping[str, str] | None = None,
-) -> tuple[CLIResolvedConfig, str | None, list[str]]:
+) -> tuple[CLIResolvedConfig, str | None, str | None, list[str]]:
     """Resolve configuration strictly across CLI > OS env > --env-file > TOML > defaults.
 
-    Returns `(resolved_config, raw_runtime_api_key, warnings)` with zero secrets retained
-    inside `resolved_config`.
+    Returns `(resolved_config, raw_judge_api_key, raw_embedding_api_key, warnings)` with zero
+    secrets retained inside `resolved_config`.
     """
     active_cwd = cwd if cwd is not None else Path.cwd()
     os_env = environ if environ is not None else os.environ
@@ -928,6 +1083,7 @@ def resolve_cli_config(
     run_sec = toml_model.run or _TomlRunSection()
     target_sec = toml_model.target or _TomlTargetSection()
     judge_sec = toml_model.judge or _TomlJudgeSection()
+    emb_sec = toml_model.embedding or _TomlEmbeddingSection()
     sec_sec = toml_model.security or _TomlSecuritySection()
     gate_sec = toml_model.gate or _TomlGateSection()
     log_sec = toml_model.logging or _TomlLoggingSection()
@@ -935,6 +1091,11 @@ def resolve_cli_config(
     if judge_sec.api_key and judge_sec.api_key.strip():
         warnings.append(
             "Plaintext judge.api_key found in TOML config; prefer EVALFORGE_JUDGE_API_KEY env var."
+        )
+    if emb_sec.api_key and emb_sec.api_key.strip():
+        warnings.append(
+            "Plaintext embedding.api_key found in TOML config; prefer "
+            "EVALFORGE_EMBEDDING_API_KEY env var."
         )
 
     lookup = _TierLookup(cli_overrides=cli_map, os_env=os_env, env_file_vars=env_file_vars)
@@ -959,7 +1120,23 @@ def resolve_cli_config(
         toml_val=run_sec.executions,
     )
     run_id = lookup.resolve("run_id", env_var="EVALFORGE_RUN_ID", toml_val=run_sec.run_id)
+    repeats = lookup.resolve(
+        "repeats",
+        cli_key="repeats",
+        env_var="EVALFORGE_REPEATS",
+        env_parser="int",
+        toml_val=run_sec.repeats,
+        default=1,
+    )
     baseline = lookup.resolve("baseline", env_var="EVALFORGE_BASELINE", toml_val=run_sec.baseline)
+    baseline_runs = lookup.resolve(
+        "baseline_runs",
+        cli_key="baseline_run",
+        env_var="EVALFORGE_BASELINE_RUNS",
+        env_parser="str_list",
+        toml_val=run_sec.baseline_runs,
+        default=[],
+    )
     trend_window = lookup.resolve(
         "trend_window",
         cli_key="trend_window",
@@ -992,6 +1169,11 @@ def resolve_cli_config(
         judge_cfg, sec_cfg, raw_key_str = _resolve_judge_and_security(
             lookup, judge_sec, sec_sec, exec_seed=exec_cfg.seed
         )
+        emb_cfg, raw_emb_key_str = _resolve_embedding_section(
+            lookup,
+            emb_sec,
+            security_local_only=sec_cfg.local_only,
+        )
         gate_cfg = _resolve_gate_section(lookup, gate_sec)
 
         log_level = lookup.resolve(
@@ -1019,13 +1201,16 @@ def resolve_cli_config(
             dataset_version=str(dataset_version) if dataset_version is not None else None,
             executions_path=str(executions_path) if executions_path is not None else None,
             run_id=str(run_id) if run_id is not None else None,
+            repeats=repeats,
             baseline=str(baseline) if baseline is not None else None,
+            baseline_runs=list(baseline_runs),
             trend_window=trend_window,
             strict=bool(strict),
             target=target_cfg,
             metrics=resolved_metrics,
             execution=exec_cfg,
             judge=judge_cfg,
+            embedding=emb_cfg,
             security=sec_cfg,
             gate=gate_cfg,
             logging=ResolvedLoggingConfig(
@@ -1041,7 +1226,26 @@ def resolve_cli_config(
             f"Resolved configuration failed validation: {scrub_secret_text(str(exc))}"
         ) from exc
 
-    return resolved, raw_key_str, warnings
+    return resolved, raw_key_str, raw_emb_key_str, warnings
+
+
+def resolve_cli_config(
+    *,
+    cli_overrides: Mapping[str, Any] | None = None,
+    config_path: str | Path | None = None,
+    env_file: str | Path | None = None,
+    cwd: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[CLIResolvedConfig, str | None, list[str]]:
+    """Backward-compatible wrapper returning `(resolved_config, raw_judge_api_key, warnings)`."""
+    resolved, raw_judge_key, _, warnings = resolve_cli_config_with_secrets(
+        cli_overrides=cli_overrides,
+        config_path=config_path,
+        env_file=env_file,
+        cwd=cwd,
+        environ=environ,
+    )
+    return resolved, raw_judge_key, warnings
 
 
 def format_resolved_config_text(resolved: CLIResolvedConfig) -> str:

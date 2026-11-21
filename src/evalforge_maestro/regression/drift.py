@@ -99,6 +99,24 @@ def _pair_provenance_drift(
             )
         )
 
+    base_emb_fp = getattr(baseline, "embedding_config_fingerprint", None)
+    cand_emb_fp = getattr(candidate, "embedding_config_fingerprint", None)
+    if base_emb_fp != cand_emb_fp:
+        warnings.append(
+            DriftWarning(
+                category=DriftCategory.EMBEDDING_CONFIG,
+                baseline_run_id=baseline.run_id,
+                candidate_run_id=candidate.run_id,
+                baseline_value=base_emb_fp,
+                candidate_value=cand_emb_fp,
+                explanation=(
+                    f"Embedding configuration fingerprint shifted from "
+                    f"{base_emb_fp!r} in {baseline.run_id!r} to "
+                    f"{cand_emb_fp!r} in {candidate.run_id!r}."
+                ),
+            )
+        )
+
     return warnings
 
 
@@ -172,3 +190,47 @@ def detect_window_drift(
                 )
             )
     return warnings
+
+
+def detect_cohort_drift(
+    baseline_runs: Sequence[RunRecord],
+    candidate_runs: Sequence[RunRecord],
+) -> list[DriftWarning]:
+    """Inspect intra-cohort stability and cross-cohort provenance drift."""
+    warnings: list[DriftWarning] = []
+    if not baseline_runs or not candidate_runs:
+        return warnings
+
+    for later in baseline_runs[1:]:
+        warnings.extend(_pair_provenance_drift(baseline_runs[0], later))
+    for later in candidate_runs[1:]:
+        warnings.extend(_pair_provenance_drift(candidate_runs[0], later))
+
+    warnings.extend(detect_drift(baseline_runs[-1], candidate_runs[-1]))
+
+    for run in [*baseline_runs[:-1], *candidate_runs[:-1]]:
+        if run.dataset_capped:
+            warnings.append(
+                DriftWarning(
+                    category=DriftCategory.DATASET_CAPPED,
+                    candidate_run_id=run.run_id,
+                    candidate_value=True,
+                    explanation=(
+                        f"Cohort run {run.run_id!r} evaluated a capped subset of its dataset."
+                    ),
+                )
+            )
+
+    deduped: list[DriftWarning] = []
+    seen: set[tuple[DriftCategory, str | None, str | None, str | None]] = set()
+    for warning in warnings:
+        key = (
+            warning.category,
+            warning.metric_id,
+            warning.baseline_run_id,
+            warning.candidate_run_id,
+        )
+        if key not in seen:
+            seen.add(key)
+            deduped.append(warning)
+    return deduped

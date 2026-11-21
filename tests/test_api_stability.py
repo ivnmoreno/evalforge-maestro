@@ -46,17 +46,22 @@ from evalforge_maestro.types import (
     CLIResolvedConfig,
     ConfigValidationPayload,
     DecoupledEvidenceDiagnostic,
+    EmbeddingConfig,
     ExpectedContextItem,
     ExpectedToolCall,
     HumanCalibrationSample,
     JudgeConfig,
     JudgeResponse,
+    MetricComparison,
     QualityGatePolicy,
     QualityGateResult,
     RAGExtractorConfig,
     ReportDiagnosticsSummary,
     ReportDocument,
+    ResolvedEmbeddingSettings,
+    RunCohortSummary,
     RunComparisonReport,
+    StatisticalSummary,
     ToolCallRecord,
     TrendReport,
 )
@@ -105,6 +110,7 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "ConfigSourceTier",
         "ConfigValidationPayload",
         "ConfigurationError",
+        "ContextEmbeddingSimilarityMetric",
         "ContextRelevanceMetric",
         "CustomRubricJudgeMetric",
         "DatasetEngine",
@@ -115,6 +121,9 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "DriftCategory",
         "DriftWarning",
         "DuplicateCaseIdError",
+        "EmbeddingAggregation",
+        "EmbeddingConfig",
+        "EmbeddingSimilarityMetric",
         "EmptyDatasetError",
         "EvalforgeError",
         "EvaluationCase",
@@ -165,14 +174,19 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "ReportDiagnosticsSummary",
         "ReportDocument",
         "ReportKind",
+        "ResolvedEmbeddingSettings",
         "ResolvedJudgeSettings",
         "ResolvedLoggingConfig",
         "ResolvedSecurityConfig",
         "ResolvedTargetConfig",
         "RetrievedChunk",
+        "RunCohortSummary",
         "RunComparisonReport",
         "RunManifestEntry",
         "RunRecord",
+        "SignificanceStatus",
+        "StatisticalMethod",
+        "StatisticalSummary",
         "StorageError",
         "TargetAdapter",
         "TargetChangeSummary",
@@ -194,13 +208,16 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "argument_correctness",
         "build_calibration_report",
         "build_comparison_report",
+        "build_pooled_cohort_run",
         "build_run_report",
         "build_trend_report",
         "calibrate_judge",
+        "compare_run_cohorts",
         "compare_runs",
         "context_relevance",
         "custom_rubric_judge",
         "detect_anomalies",
+        "detect_cohort_drift",
         "detect_decoupled_evidence",
         "detect_drift",
         "detect_pii_categories",
@@ -244,8 +261,11 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
     assert set(regression.__all__) == {
         "QualityGate",
         "analyze_trend",
+        "build_pooled_cohort_run",
+        "compare_run_cohorts",
         "compare_runs",
         "detect_anomalies",
+        "detect_cohort_drift",
         "detect_drift",
     }
     assert set(datasets.__all__) == {"DatasetEngine", "DatasetStreamResult", "load_docpipe_fixture"}
@@ -504,6 +524,73 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         ("comparison", "KEYWORD_ONLY"),
         ("trend", "KEYWORD_ONLY"),
     ]
+    assert _param_spec(regression.QualityGate.evaluate_cohort) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("runs", "POSITIONAL_OR_KEYWORD"),
+        ("comparison", "KEYWORD_ONLY"),
+        ("trend", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(regression.build_pooled_cohort_run) == [
+        ("runs", "POSITIONAL_OR_KEYWORD"),
+    ]
+    assert _param_spec(regression.compare_run_cohorts) == [
+        ("baseline_runs", "POSITIONAL_OR_KEYWORD"),
+        ("candidate_runs", "POSITIONAL_OR_KEYWORD"),
+        ("baseline_name", "KEYWORD_ONLY"),
+        ("policy", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(regression.detect_cohort_drift) == [
+        ("baseline_runs", "POSITIONAL_OR_KEYWORD"),
+        ("candidate_runs", "POSITIONAL_OR_KEYWORD"),
+    ]
+    for emb_cls in (
+        evalforge_maestro.EmbeddingSimilarityMetric,
+        evalforge_maestro.ContextEmbeddingSimilarityMetric,
+    ):
+        assert _param_spec(emb_cls.__init__) == [
+            ("self", "POSITIONAL_OR_KEYWORD"),
+            ("config", "KEYWORD_ONLY"),
+            ("api_key", "KEYWORD_ONLY"),
+            ("embed_fn", "KEYWORD_ONLY"),
+        ]
+    assert set(EmbeddingConfig.model_fields) >= {
+        "schema_version",
+        "model",
+        "api_base",
+        "pass_threshold",
+        "aggregation",
+        "max_input_chars",
+        "local_only",
+        "mock_mode",
+    }
+    assert set(ResolvedEmbeddingSettings.model_fields) >= {
+        "model",
+        "api_base",
+        "api_key_configured",
+        "pass_threshold",
+        "aggregation",
+        "max_input_chars",
+        "mock_mode",
+        "local_only",
+    }
+    assert set(StatisticalSummary.model_fields) >= {
+        "method",
+        "confidence_level",
+        "sample_size",
+        "mean_delta",
+        "ci_low",
+        "ci_high",
+        "p_value",
+        "significance",
+        "statistically_significant",
+    }
+    assert set(RunCohortSummary.model_fields) >= {
+        "baseline_run_ids",
+        "candidate_run_ids",
+        "baseline_run_count",
+        "candidate_run_count",
+    }
+    assert set(MetricComparison.model_fields) >= {"statistics", "case_statistics"}
     assert set(BaselineEntry.model_fields) >= {
         "schema_version",
         "name",
@@ -522,6 +609,7 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         "case_comparisons",
         "drift_warnings",
         "anomalies",
+        "cohort",
     }
     assert set(TrendReport.model_fields) >= {
         "schema_version",
@@ -537,6 +625,9 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         "case_drop_warning_threshold",
         "trend_slope_threshold",
         "max_inconclusive_rate",
+        "confidence_level",
+        "min_statistical_samples",
+        "fail_on_significant_regression",
     }
     assert set(QualityGateResult.model_fields) >= {
         "schema_version",
@@ -546,6 +637,7 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         "checks",
         "drift_warnings",
         "anomalies",
+        "cohort",
     }
     for judge_cls in (
         judges.GroundednessMetric,
@@ -734,13 +826,16 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         "dataset_version",
         "executions_path",
         "run_id",
+        "repeats",
         "baseline",
+        "baseline_runs",
         "trend_window",
         "strict",
         "target",
         "metrics",
         "execution",
         "judge",
+        "embedding",
         "security",
         "gate",
         "logging",
@@ -782,6 +877,8 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         "gate",
         "calibration_gate",
         "diagnostics",
+        "cohort_run_ids",
+        "cohort_aggregates",
     }
     assert set(BaselineCommandPayload.model_fields) >= {
         "schema_version",

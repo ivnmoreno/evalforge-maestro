@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from evalforge_maestro._canonical import canonical_json_bytes
 from evalforge_maestro.exceptions import ConfigurationError
-from evalforge_maestro.regression.compare import compare_runs
+from evalforge_maestro.regression.compare import compare_run_cohorts, compare_runs
 from evalforge_maestro.regression.gate import QualityGate
 from evalforge_maestro.regression.trend import analyze_trend
 from evalforge_maestro.types import (
@@ -25,6 +25,7 @@ from evalforge_maestro.types import (
     QualityGateResult,
     RunManifestEntry,
     RunRecord,
+    SignificanceStatus,
 )
 
 
@@ -455,3 +456,136 @@ def test_quality_gate_mismatch_guard_and_result_model_validators() -> None:
             checks=[],
             summary="bad rate",
         )
+
+
+def test_quality_gate_statistical_significance_and_cohort_evaluation() -> None:
+    # Q1: Tiny -0.02 drop stays within max_regression_drop=0.05 but is statistically significant
+    base_tiny = _run_fixture(
+        "stat-base",
+        cases=[
+            (f"c{i}", False, {"exact_match": (0.90, MetricStatus.PASS, "1.0.0")}, [])
+            for i in range(5)
+        ],
+    )
+    cand_tiny = _run_fixture(
+        "stat-cand",
+        cases=[
+            (f"c{i}", False, {"exact_match": (0.88, MetricStatus.PASS, "1.0.0")}, [])
+            for i in range(5)
+        ],
+    )
+    comp_tiny = compare_runs(
+        base_tiny,
+        cand_tiny,
+        policy=QualityGatePolicy(max_regression_drop=0.05),
+    )
+    assert comp_tiny.metric_comparisons["exact_match"].statistics is not None
+    assert (
+        comp_tiny.metric_comparisons["exact_match"].statistics.significance
+        == SignificanceStatus.SIGNIFICANT_REGRESSION
+    )
+
+    advisory_res = QualityGate(
+        QualityGatePolicy(max_regression_drop=0.05, fail_on_significant_regression=False)
+    ).evaluate(cand_tiny, comparison=comp_tiny)
+    assert advisory_res.decision == GateDecision.WARNING
+    stat_rule = next(
+        c for c in advisory_res.checks if c.rule_id == "statistical_regression:exact_match"
+    )
+    assert stat_rule.status == GateDecision.WARNING
+
+    strict_stat_res = QualityGate(
+        QualityGatePolicy(max_regression_drop=0.05, fail_on_significant_regression=True)
+    ).evaluate(cand_tiny, comparison=comp_tiny)
+    assert strict_stat_res.decision == GateDecision.FAIL
+    strict_rule = next(
+        c for c in strict_stat_res.checks if c.rule_id == "statistical_regression:exact_match"
+    )
+    assert strict_rule.status == GateDecision.FAIL
+
+    # Non-significant comparison exercises PASS "statistical_significance" branch
+    cand_same = _run_fixture(
+        "stat-same",
+        cases=[
+            (f"c{i}", False, {"exact_match": (0.90, MetricStatus.PASS, "1.0.0")}, [])
+            for i in range(5)
+        ],
+    )
+    comp_same = compare_runs(base_tiny, cand_same)
+    pass_stat_res = QualityGate().evaluate(cand_same, comparison=comp_same)
+    assert pass_stat_res.decision == GateDecision.PASS
+    assert any(
+        c.rule_id == "statistical_significance" and c.status == GateDecision.PASS
+        for c in pass_stat_res.checks
+    )
+
+    # Cohort gate validation + Q2 any-repeat mandatory fail + pooled floor check
+    with pytest.raises(ConfigurationError):
+        QualityGate().evaluate_cohort([])
+
+    r1_mand_fail = _run_fixture(
+        "coh-r1",
+        cases=[
+            ("m1", True, {"exact_match": (0.0, MetricStatus.FAIL, "1.0.0")}, []),
+            ("c2", False, {"exact_match": (1.0, MetricStatus.PASS, "1.0.0")}, []),
+        ],
+    )
+    r2_pass = _run_fixture(
+        "coh-r2",
+        cases=[
+            ("m1", True, {"exact_match": (1.0, MetricStatus.PASS, "1.0.0")}, []),
+            ("c2", False, {"exact_match": (1.0, MetricStatus.PASS, "1.0.0")}, []),
+        ],
+    )
+    mand_cohort_res = QualityGate().evaluate_cohort([r1_mand_fail, r2_pass])
+    assert mand_cohort_res.decision == GateDecision.FAIL
+    assert mand_cohort_res.candidate_run_id == "coh-r2"
+    assert any(
+        c.rule_id == "mandatory_cases" and c.status == GateDecision.FAIL
+        for c in mand_cohort_res.checks
+    )
+
+    r_low = _run_fixture(
+        "pool-r1",
+        cases=[("c1", False, {"exact_match": (0.60, MetricStatus.PASS, "1.0.0")}, [])],
+    )
+    r_high = _run_fixture(
+        "pool-r2",
+        cases=[("c1", False, {"exact_match": (0.80, MetricStatus.PASS, "1.0.0")}, [])],
+    )
+    assert (
+        QualityGate(QualityGatePolicy(min_score=0.65)).evaluate_cohort([r_low, r_high]).decision
+        == GateDecision.PASS
+    )
+    assert (
+        QualityGate(QualityGatePolicy(min_score=0.75)).evaluate_cohort([r_low, r_high]).decision
+        == GateDecision.FAIL
+    )
+
+    # Multi-run cohort comparison integrated with evaluate_cohort (K=3 vs M=3)
+    b_cohs = [
+        _run_fixture(
+            f"b-coh-{i}",
+            cases=[("c1", False, {"exact_match": (score, MetricStatus.PASS, "1.0.0")}, [])],
+        )
+        for i, score in enumerate((0.90, 0.905, 0.91), start=1)
+    ]
+    c_cohs = [
+        _run_fixture(
+            f"c-coh-{i}",
+            cases=[("c1", False, {"exact_match": (score, MetricStatus.PASS, "1.0.0")}, [])],
+        )
+        for i, score in enumerate((0.88, 0.885, 0.89), start=1)
+    ]
+    coh_cmp = compare_run_cohorts(b_cohs, c_cohs)
+    assert (
+        QualityGate(QualityGatePolicy(max_regression_drop=0.05))
+        .evaluate_cohort(c_cohs, comparison=coh_cmp)
+        .decision
+        == GateDecision.WARNING
+    )
+    with pytest.raises(ConfigurationError):
+        QualityGate().evaluate_cohort(b_cohs, comparison=coh_cmp)
+
+    single_vs_cohort = compare_runs(b_cohs[-1], c_cohs[-1])
+    assert QualityGate().evaluate_cohort(c_cohs, comparison=single_vs_cohort).passed

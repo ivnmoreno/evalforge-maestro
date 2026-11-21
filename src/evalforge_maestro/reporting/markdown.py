@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from evalforge_maestro._canonical import redact_secrets, scrub_secret_text
 from evalforge_maestro.types import (
+    AggregateMetricSummary,
     CalibrationReport,
     MetricStatus,
     QualityGateResult,
@@ -32,16 +34,48 @@ def _fmt_num(value: float | None, *, suffix: str = "") -> str:
     return f"{value:.6g}{suffix}"
 
 
+def _render_aggregate_rows(aggregates: Mapping[str, AggregateMetricSummary]) -> list[str]:
+    rows = [
+        "| Metric | Version | Mean | Applicable | Pass | Fail | Warn | Inconclusive | N/A |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for metric_id in sorted(aggregates):
+        agg = aggregates[metric_id]
+        rows.append(
+            "| "
+            + " | ".join(
+                [
+                    f"`{_cell(metric_id)}`",
+                    f"`{_cell(agg.metric_version)}`",
+                    _fmt_num(agg.mean_score),
+                    str(agg.applicable_count),
+                    str(agg.pass_count),
+                    str(agg.fail_count),
+                    str(agg.warning_count),
+                    str(agg.inconclusive_count),
+                    str(agg.not_applicable_count),
+                ]
+            )
+            + " |"
+        )
+    return rows
+
+
 def _render_evaluation_section(
     evaluation: RunRecord | None,
     calibration: CalibrationReport | None,
+    *,
+    cohort_run_ids: Sequence[str] = (),
+    cohort_aggregates: Mapping[str, AggregateMetricSummary] | None = None,
 ) -> list[str]:
     lines = ["## Evaluation", ""]
     if evaluation is not None:
         cfg_fp = evaluation.config_fingerprint
         judge_fp = evaluation.judge_config_fingerprint
+        emb_fp = evaluation.embedding_config_fingerprint
         cfg_fp_short = f"{cfg_fp[:12]}..." if cfg_fp else None
         judge_fp_short = f"{judge_fp[:12]}..." if judge_fp else None
+        emb_fp_short = f"{emb_fp[:12]}..." if emb_fp else None
         lines.extend(
             [
                 f"- **Run ID**: `{_cell(evaluation.run_id)}`",
@@ -54,33 +88,28 @@ def _render_evaluation_section(
                 f"- **Target**: system=`{_cell(evaluation.system_version)}`, "
                 f"model=`{_cell(evaluation.model_id)}`, "
                 f"config_fp=`{_cell(cfg_fp_short)}`, "
-                f"judge_fp=`{_cell(judge_fp_short)}`",
+                f"judge_fp=`{_cell(judge_fp_short)}`, "
+                f"embedding_fp=`{_cell(emb_fp_short)}`",
                 "",
-                "| Metric | Version | Mean | Applicable | Pass | Fail | Warn "
-                "| Inconclusive | N/A |",
-                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+                *_render_aggregate_rows(evaluation.aggregates),
+                "",
             ]
         )
-        for metric_id in sorted(evaluation.aggregates):
-            agg = evaluation.aggregates[metric_id]
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        f"`{_cell(metric_id)}`",
-                        f"`{_cell(agg.metric_version)}`",
-                        _fmt_num(agg.mean_score),
-                        str(agg.applicable_count),
-                        str(agg.pass_count),
-                        str(agg.fail_count),
-                        str(agg.warning_count),
-                        str(agg.inconclusive_count),
-                        str(agg.not_applicable_count),
-                    ]
-                )
-                + " |"
+        if cohort_run_ids:
+            run_tags = ", ".join(f"`{_cell(r)}`" for r in cohort_run_ids)
+            lines.append(f"- **Cohort Runs ({len(cohort_run_ids)})**: {run_tags}")
+        if cohort_aggregates:
+            lines.extend(
+                [
+                    "",
+                    "### Pooled Cohort Aggregates",
+                    "",
+                    *_render_aggregate_rows(cohort_aggregates),
+                    "",
+                ]
             )
-        lines.append("")
+        elif cohort_run_ids:
+            lines.append("")
     elif calibration is not None:
         sanitized_cfg = redact_secrets(calibration.judge_config.model_dump(mode="json"))
         agr_fmt = _fmt_num(calibration.exact_agreement_rate, suffix="%")
@@ -149,37 +178,108 @@ def _render_regression_section(
         return lines
 
     if comparison is not None:
+        heading = (
+            f"### Cohort Comparison (`{_cell(comparison.candidate_run_id)}` vs "
+            f"`{_cell(comparison.baseline_run_id)}`)"
+            if comparison.cohort is not None
+            else f"### Pairwise Comparison (`{_cell(comparison.candidate_run_id)}` vs "
+            f"`{_cell(comparison.baseline_run_id)}`)"
+        )
         lines.extend(
             [
-                f"### Pairwise Comparison (`{_cell(comparison.candidate_run_id)}` vs "
-                f"`{_cell(comparison.baseline_run_id)}`)",
+                heading,
                 "",
                 f"- **Baseline Alias**: `{_cell(comparison.baseline_name)}`",
+            ]
+        )
+        if comparison.cohort is not None:
+            cohort = comparison.cohort
+            lines.append(
+                f"- **Cohort**: {cohort.baseline_run_count} baseline run(s) vs "
+                f"{cohort.candidate_run_count} candidate run(s) "
+                f"(`baseline={cohort.baseline_run_count}`, "
+                f"`candidate={cohort.candidate_run_count}`; "
+                f"baseline_ids=`[{', '.join(_cell(r) for r in cohort.baseline_run_ids)}]`, "
+                f"candidate_ids=`[{', '.join(_cell(r) for r in cohort.candidate_run_ids)}]`)"
+            )
+        lines.extend(
+            [
                 f"- **Matched Cases**: `{comparison.matched_case_count}` "
                 f"(added=`{len(comparison.added_case_ids)}`, "
                 f"removed=`{len(comparison.removed_case_ids)}`, "
                 f"regressed=`{len(comparison.regressed_case_ids)}`, "
                 f"mandatory_regressed=`{len(comparison.mandatory_regressed_case_ids)}`)",
                 "",
-                "| Metric | Baseline | Candidate | Delta | Direction |",
-                "| --- | --- | --- | --- | --- |",
             ]
         )
-        for metric_id in sorted(comparison.metric_comparisons):
-            mc = comparison.metric_comparisons[metric_id]
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        f"`{_cell(metric_id)}`",
-                        _fmt_num(mc.baseline_score),
-                        _fmt_num(mc.candidate_score),
-                        _fmt_num(mc.delta),
-                        f"`{mc.direction.value}`",
-                    ]
-                )
-                + " |"
+        has_stats = any(mc.statistics is not None for mc in comparison.metric_comparisons.values())
+        if has_stats:
+            lines.extend(
+                [
+                    "| Metric | Baseline (Std) | Candidate (Std) | Delta | CI | p-value "
+                    "| Significance | Method | Direction |",
+                    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+                ]
             )
+            for metric_id in sorted(comparison.metric_comparisons):
+                mc = comparison.metric_comparisons[metric_id]
+                stats = mc.statistics
+                base_cell = _fmt_num(mc.baseline_score)
+                cand_cell = _fmt_num(mc.candidate_score)
+                ci_cell = "-"
+                p_cell = "-"
+                sig_cell = "-"
+                method_cell = "-"
+                if stats is not None:
+                    if stats.baseline_std is not None:
+                        base_cell = f"{base_cell} ({_fmt_num(stats.baseline_std)})"
+                    if stats.candidate_std is not None:
+                        cand_cell = f"{cand_cell} ({_fmt_num(stats.candidate_std)})"
+                    if stats.ci_low is not None and stats.ci_high is not None:
+                        pct = round(stats.confidence_level * 100)
+                        ci_cell = f"{pct}% [{_fmt_num(stats.ci_low)}, {_fmt_num(stats.ci_high)}]"
+                    p_cell = _fmt_num(stats.p_value)
+                    sig_cell = f"`{stats.significance.value}`"
+                    method_cell = f"`{stats.method.value}`"
+                lines.append(
+                    "| "
+                    + " | ".join(
+                        [
+                            f"`{_cell(metric_id)}`",
+                            base_cell,
+                            cand_cell,
+                            _fmt_num(mc.delta),
+                            ci_cell,
+                            p_cell,
+                            sig_cell,
+                            method_cell,
+                            f"`{mc.direction.value}`",
+                        ]
+                    )
+                    + " |"
+                )
+        else:
+            lines.extend(
+                [
+                    "| Metric | Baseline | Candidate | Delta | Direction |",
+                    "| --- | --- | --- | --- | --- |",
+                ]
+            )
+            for metric_id in sorted(comparison.metric_comparisons):
+                mc = comparison.metric_comparisons[metric_id]
+                lines.append(
+                    "| "
+                    + " | ".join(
+                        [
+                            f"`{_cell(metric_id)}`",
+                            _fmt_num(mc.baseline_score),
+                            _fmt_num(mc.candidate_score),
+                            _fmt_num(mc.delta),
+                            f"`{mc.direction.value}`",
+                        ]
+                    )
+                    + " |"
+                )
         lines.append("")
 
     if trend is not None:
@@ -433,7 +533,12 @@ def render_markdown(document: ReportDocument) -> str:
     ]
     sections = [
         *header,
-        *_render_evaluation_section(document.evaluation, document.calibration),
+        *_render_evaluation_section(
+            document.evaluation,
+            document.calibration,
+            cohort_run_ids=document.cohort_run_ids,
+            cohort_aggregates=document.cohort_aggregates,
+        ),
         *_render_regression_section(document.comparison, document.trend),
         *_render_gate_section(document.gate, document),
         *_render_diagnostics_section(document),

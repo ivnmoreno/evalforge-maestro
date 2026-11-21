@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import logging
 import subprocess
 import sys
@@ -132,6 +133,7 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                     "execution",
                     "metrics",
                     "judges",
+                    "embeddings",
                     "regression",
                     "storage",
                 ):
@@ -139,14 +141,15 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                         f"Reporting module {rel} must not import {mod!r}"
                     )
 
-        # Leaf modules types.py, exceptions.py, _canonical.py must not import domain subpackages
-        if rel in {"types.py", "exceptions.py", "_canonical.py"}:
+        # Leaf modules types.py, exceptions.py, _canonical.py, _locality.py stay domain-free
+        if rel in {"types.py", "exceptions.py", "_canonical.py", "_locality.py"}:
             for mod in imports:
                 for sub in (
                     "datasets",
                     "adapters",
                     "metrics",
                     "judges",
+                    "embeddings",
                     "execution",
                     "storage",
                     "regression",
@@ -155,11 +158,22 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                     assert not mod.startswith(f"evalforge_maestro.{sub}"), (
                         f"Leaf module {rel} must not import {mod!r}"
                     )
+                if rel != "_locality.py":
+                    assert mod != "evalforge_maestro._locality" and not mod.startswith(
+                        "evalforge_maestro._locality."
+                    ), f"Leaf module {rel} must not import {mod!r}"
 
         # Pure computational modules (regression/, metrics/) never import I/O/adapters/judges
         if rel.startswith(("regression/", "metrics/")):
             for mod in imports:
-                for forbidden_sub in ("adapters", "execution", "storage", "judges", "reporting"):
+                for forbidden_sub in (
+                    "adapters",
+                    "execution",
+                    "storage",
+                    "judges",
+                    "embeddings",
+                    "reporting",
+                ):
                     assert not mod.startswith(f"evalforge_maestro.{forbidden_sub}"), (
                         f"Pure module {rel} must not import {mod!r}"
                     )
@@ -173,6 +187,7 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                     "execution",
                     "storage",
                     "metrics",
+                    "embeddings",
                     "regression",
                     "reporting",
                 ):
@@ -186,6 +201,30 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                         assert not alias.name.startswith("litellm")
                 elif isinstance(top_node, ast.ImportFrom) and top_node.module:
                     assert not top_node.module.startswith("litellm")
+
+        # Embeddings subsystem keeps numpy, scipy, and litellm lazy and avoids domain leaks
+        if rel.startswith("embeddings/"):
+            for mod in imports:
+                for forbidden_sub in (
+                    "adapters",
+                    "datasets",
+                    "execution",
+                    "storage",
+                    "metrics",
+                    "judges",
+                    "regression",
+                    "reporting",
+                ):
+                    assert not mod.startswith(f"evalforge_maestro.{forbidden_sub}"), (
+                        f"Embeddings module {rel} must not import {mod!r}"
+                    )
+            module_ast = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+            for top_node in module_ast.body:
+                if isinstance(top_node, ast.Import):
+                    for alias in top_node.names:
+                        assert not alias.name.startswith(("numpy", "scipy", "litellm"))
+                elif isinstance(top_node, ast.ImportFrom) and top_node.module:
+                    assert not top_node.module.startswith(("numpy", "scipy", "litellm"))
 
         # Core/domain modules must never import docpipe_maestro, langchain, or llama_index
         source_text = py_file.read_text(encoding="utf-8")
@@ -260,6 +299,47 @@ def test_cold_start_import_loads_no_heavy_optional_dependencies() -> None:
         text=True,
     )
     assert proc_mock.returncode == 0, proc_mock.stderr or proc_mock.stdout
+
+    # Embedding mock execution preserves litellm absence when [embeddings] is installed,
+    # and fails fast with MissingExtraError when [embeddings] (numpy) is absent.
+    if importlib.util.find_spec("numpy") is not None:
+        emb_probe = (
+            "import sys; "
+            "from evalforge_maestro.embeddings import EmbeddingSimilarityMetric; "
+            "from evalforge_maestro.types import EmbeddingConfig, EvaluationCase, "
+            "ExecutionResult; "
+            "m = EmbeddingSimilarityMetric(config=EmbeddingConfig(mock_mode=True)); "
+            "res = m.evaluate("
+            "EvaluationCase(id='e1', input='hi', reference='semantic cache'), "
+            "ExecutionResult(case_id='e1', input='hi', output='semantic cache', "
+            "elapsed_seconds=0.0)); "
+            "assert res.score == 1.0; "
+            "assert 'litellm' not in sys.modules"
+        )
+    else:
+        emb_probe = (
+            "import sys\n"
+            "from evalforge_maestro.embeddings import EmbeddingSimilarityMetric\n"
+            "from evalforge_maestro.exceptions import MissingExtraError\n"
+            "from evalforge_maestro.types import EmbeddingConfig, EvaluationCase, "
+            "ExecutionResult\n"
+            "m = EmbeddingSimilarityMetric(config=EmbeddingConfig(mock_mode=True))\n"
+            "try:\n"
+            "    m.evaluate(EvaluationCase(id='e1', input='hi'), "
+            "ExecutionResult(case_id='e1', input='hi', output='ok', elapsed_seconds=0.0))\n"
+            "except MissingExtraError as exc:\n"
+            "    assert 'embeddings' in str(exc)\n"
+            "else:\n"
+            "    raise AssertionError('Expected MissingExtraError without [embeddings]')\n"
+            "assert 'numpy' not in sys.modules and 'litellm' not in sys.modules"
+        )
+    proc_emb = subprocess.run(
+        [sys.executable, "-c", emb_probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc_emb.returncode == 0, proc_emb.stderr or proc_emb.stdout
 
     # CLI `--help` cold start (root and subcommand) must also leave heavy/config modules unloaded
     for help_argv in (

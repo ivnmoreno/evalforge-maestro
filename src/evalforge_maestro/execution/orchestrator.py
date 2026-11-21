@@ -342,24 +342,53 @@ def _build_aggregates(
     return aggregates, global_counts, sorted(mandatory_failed)
 
 
+def _resolve_metric_config_fingerprint(
+    metrics: Sequence[Metric],
+    explicit_fingerprint: str | None,
+    *,
+    attr_name: str,
+    group_key: str,
+) -> str | None:
+    """Resolve explicit or derived canonical SHA-256 config fingerprint across metrics."""
+    if explicit_fingerprint is not None:
+        return explicit_fingerprint
+    fps: list[tuple[str, str]] = []
+    for metric in metrics:
+        fp = getattr(metric, attr_name, None)
+        if isinstance(fp, str) and fp:
+            fps.append((metric.metadata.metric_id, fp))
+    if not fps:
+        return None
+    if len(fps) == 1:
+        return fps[0][1]
+    return canonical_sha256(
+        {group_key: [[mid, fp] for mid, fp in sorted(fps, key=lambda pair: pair)]}
+    )
+
+
 def _resolve_judge_config_fingerprint(
     metrics: Sequence[Metric],
     explicit_fingerprint: str | None,
 ) -> str | None:
     """Resolve explicit or derived canonical judge configuration fingerprint for a run."""
-    if explicit_fingerprint is not None:
-        return explicit_fingerprint
-    judge_fps: list[tuple[str, str]] = []
-    for metric in metrics:
-        fp = getattr(metric, "judge_config_fingerprint", None)
-        if isinstance(fp, str) and fp:
-            judge_fps.append((metric.metadata.metric_id, fp))
-    if not judge_fps:
-        return None
-    if len(judge_fps) == 1:
-        return judge_fps[0][1]
-    return canonical_sha256(
-        {"judges": [[mid, fp] for mid, fp in sorted(judge_fps, key=lambda pair: pair)]}
+    return _resolve_metric_config_fingerprint(
+        metrics,
+        explicit_fingerprint,
+        attr_name="judge_config_fingerprint",
+        group_key="judges",
+    )
+
+
+def _resolve_embedding_config_fingerprint(
+    metrics: Sequence[Metric],
+    explicit_fingerprint: str | None,
+) -> str | None:
+    """Resolve explicit or derived canonical embedding configuration fingerprint for a run."""
+    return _resolve_metric_config_fingerprint(
+        metrics,
+        explicit_fingerprint,
+        attr_name="embedding_config_fingerprint",
+        group_key="embeddings",
     )
 
 
@@ -591,6 +620,9 @@ class EvaluationOrchestrator:
         resolved_judge_fp = _resolve_judge_config_fingerprint(
             metrics, self._config.judge_config_fingerprint
         )
+        resolved_embedding_fp = _resolve_embedding_config_fingerprint(
+            metrics, self._config.embedding_config_fingerprint
+        )
 
         run_record = RunRecord(
             run_id=resolved_run_id,
@@ -606,6 +638,7 @@ class EvaluationOrchestrator:
             model_id=adapter.model_id,
             config_fingerprint=adapter.config_fingerprint,
             judge_config_fingerprint=resolved_judge_fp,
+            embedding_config_fingerprint=resolved_embedding_fp,
             metric_versions=metric_versions,
             seed=self._config.seed,
             aggregates=aggregates,
