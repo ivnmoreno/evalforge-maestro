@@ -83,7 +83,7 @@ flowchart LR
     DEC -->|"Trace Violation / Policy Breach -> Fix Agent Guardrails"| G1
 ```
 
-> **Calibrating Small & Local Judges First**: Before letting a local model (such as Ollama/vLLM) gate pull requests, run `evalforge-maestro calibrate --samples ... --metric groundedness --min-agreement 80.0` to measure Cohen's $\kappa$, bias direction (`TOO_GENEROUS` vs. `TOO_STRICT`), and the optimal threshold sweep ([`docs/calibration-and-ci.md`](docs/calibration-and-ci.md)).
+> **Calibrating Small & Local Judges First**: Before letting a local model (such as Ollama/vLLM) gate pull requests, run `evalforge-maestro calibrate --samples ... --metric groundedness --min-agreement 80.0` to measure `exact_agreement_rate`, directional bias (`too_generous_rate` vs. `too_harsh_rate`), `mean_score_delta`, and `recommended_pass_threshold` ([`docs/calibration-and-ci.md`](docs/calibration-and-ci.md)).
 
 ### Minimal Core vs. Lazy Optional Extras
 
