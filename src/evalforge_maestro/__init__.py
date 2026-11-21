@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from importlib.metadata import PackageNotFoundError, version
+from typing import TYPE_CHECKING, Any
 
 from evalforge_maestro._canonical import detect_pii_categories
 from evalforge_maestro.adapters import (
@@ -105,6 +106,9 @@ from evalforge_maestro.reporting import (
     render_report_json,
 )
 from evalforge_maestro.storage import LocalRunStore, SQLiteRunIndex
+
+if TYPE_CHECKING:
+    from evalforge_maestro.service import ServiceApplication
 from evalforge_maestro.types import (
     SCHEMA_VERSION,
     AgentExtractorConfig,
@@ -183,6 +187,17 @@ from evalforge_maestro.types import (
     RunQueryPayload,
     RunRecord,
     RunSortOrder,
+    ServiceCompareRequest,
+    ServiceCompareResponse,
+    ServiceConfig,
+    ServiceErrorResponse,
+    ServiceEvaluateRequest,
+    ServiceEvaluateResponse,
+    ServiceHealthResponse,
+    ServiceOtelIngestRequest,
+    ServiceOtelIngestResponse,
+    ServiceReportRequest,
+    ServiceReportResponse,
     SignificanceStatus,
     SQLiteIndexStatus,
     StatisticalMethod,
@@ -329,6 +344,18 @@ __all__ = [
     "RunSortOrder",
     "SQLiteIndexStatus",
     "SQLiteRunIndex",
+    "ServiceApplication",
+    "ServiceCompareRequest",
+    "ServiceCompareResponse",
+    "ServiceConfig",
+    "ServiceErrorResponse",
+    "ServiceEvaluateRequest",
+    "ServiceEvaluateResponse",
+    "ServiceHealthResponse",
+    "ServiceOtelIngestRequest",
+    "ServiceOtelIngestResponse",
+    "ServiceReportRequest",
+    "ServiceReportResponse",
     "SignificanceStatus",
     "StatisticalMethod",
     "StatisticalSummary",
@@ -389,3 +416,11 @@ __all__ = [
     "tool_selection",
     "validate_pii_egress",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "ServiceApplication":
+        from evalforge_maestro.service import ServiceApplication
+
+        return ServiceApplication
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

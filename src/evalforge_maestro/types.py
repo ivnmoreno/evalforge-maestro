@@ -3177,3 +3177,213 @@ class CaseQueryPayload(_StrictModel):
     storage_dir: str = Field(min_length=1)
     total_returned: int = Field(ge=0)
     cases: list[IndexedCaseMetricRow] = Field(default_factory=list)
+
+
+class ServiceConfig(_StrictModel):
+    """Configuration for the optional EvalForge Maestro HTTP evaluation service wrapper."""
+
+    host: str = Field(default="127.0.0.1", min_length=1)
+    port: int = Field(default=8787, ge=0, le=65535)
+    storage_dir: str = Field(default=".evalforge", min_length=1)
+    local_only: bool = True
+    block_pii: bool = False
+    mock_mode: bool = False
+    max_request_bytes: int = Field(default=10_485_760, ge=1024, le=104_857_600)
+    auth_token_configured: bool = False
+
+    @field_validator("host", "storage_dir")
+    @classmethod
+    def _validate_non_empty_strs(cls, value: str, info: ValidationInfo) -> str:
+        return _ensure_non_empty_str(value, field_name=f"ServiceConfig.{info.field_name}")
+
+    @field_validator("port", "max_request_bytes", mode="before")
+    @classmethod
+    def _validate_strict_ints(cls, value: Any, info: ValidationInfo) -> int:
+        return _reject_strict_int(value, field_name=f"ServiceConfig.{info.field_name}")
+
+
+class ServiceHealthResponse(_StrictModel):
+    """Typed health and index readiness response emitted by `GET /health`."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    status: Literal["ok"] = "ok"
+    package_version: str = Field(min_length=1)
+    storage_dir: str = Field(min_length=1)
+    local_only: bool
+    mock_mode: bool
+    indexed_run_count: int = Field(ge=0)
+    canonical_run_count: int = Field(ge=0)
+
+
+class ServiceErrorResponse(_StrictModel):
+    """Typed secret-redacted JSON error response emitted by EvalForge HTTP endpoints."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    status_code: int = Field(ge=400, le=599)
+    error_type: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    hint: str | None = None
+
+    @field_validator("error_type", "message")
+    @classmethod
+    def _validate_required(cls, value: str, info: ValidationInfo) -> str:
+        return scrub_secret_text(
+            _ensure_non_empty_str(value, field_name=f"ServiceErrorResponse.{info.field_name}")
+        )
+
+    @field_validator("hint")
+    @classmethod
+    def _validate_hint(cls, value: str | None) -> str | None:
+        cleaned = _validate_optional_str(value, field_name="ServiceErrorResponse.hint")
+        return scrub_secret_text(cleaned) if cleaned is not None else None
+
+
+class ServiceOtelIngestRequest(_StrictModel):
+    """Typed request payload for `POST /v1/otel/ingest`."""
+
+    payload: Any
+    extractors: OtelExtractorConfig = Field(default_factory=OtelExtractorConfig)
+    dataset: list[EvaluationCase] | None = None
+    case_id_map: dict[str, str] | None = None
+    system_version: str | None = None
+    model_id: str | None = None
+
+    @field_validator("system_version", "model_id")
+    @classmethod
+    def _validate_opt_strs(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(
+            value, field_name=f"ServiceOtelIngestRequest.{info.field_name}"
+        )
+
+
+class ServiceOtelIngestResponse(_StrictModel):
+    """Typed normalized OTel response emitted by `POST /v1/otel/ingest`."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    count: int = Field(ge=0)
+    executions: list[ExecutionResult] = Field(default_factory=list)
+
+
+class ServiceEvaluateRequest(_StrictModel):
+    """Typed offline/trace evaluation request accepted by `POST /v1/evaluate`."""
+
+    cases: list[EvaluationCase] = Field(min_length=1)
+    executions: list[ExecutionResult] | None = None
+    otel_payload: Any = None
+    otel_extractors: OtelExtractorConfig = Field(default_factory=OtelExtractorConfig)
+    case_id_map: dict[str, str] | None = None
+    dataset_id: str = Field(default="remote-eval", min_length=1)
+    dataset_version: str | None = None
+    metrics: list[MetricSpecConfig] = Field(default_factory=list)
+    judge: JudgeConfig | None = None
+    embedding: EmbeddingConfig | None = None
+    gate: QualityGatePolicy = Field(default_factory=QualityGatePolicy)
+    max_context_chars: int | None = Field(default=None, ge=1)
+    max_concurrency: int = Field(default=4, ge=1, le=64)
+    seed: int | None = None
+    system_version: str | None = None
+    model_id: str | None = None
+    run_id: str | None = None
+    persist: bool = False
+    include_markdown: bool = False
+
+    @field_validator("max_context_chars", "max_concurrency", "seed", mode="before")
+    @classmethod
+    def _validate_ints(cls, value: Any, info: ValidationInfo) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name=f"ServiceEvaluateRequest.{info.field_name}")
+
+    @field_validator("dataset_version", "system_version", "model_id", "run_id")
+    @classmethod
+    def _validate_opt_strs(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"ServiceEvaluateRequest.{info.field_name}")
+
+    @model_validator(mode="after")
+    def _validate_trace_source(self) -> ServiceEvaluateRequest:
+        has_exec = self.executions is not None
+        has_otel = self.otel_payload is not None
+        if has_exec == has_otel:
+            raise ValueError(
+                "ServiceEvaluateRequest must specify exactly one of 'executions' or 'otel_payload'"
+            )
+        return self
+
+
+class ServiceEvaluateResponse(_StrictModel):
+    """Typed Three-Way response emitted by `POST /v1/evaluate`."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    persisted: bool
+    evaluation: RunRecord
+    gate: QualityGateResult
+    report: ReportDocument
+    markdown: str | None = None
+
+
+class ServiceCompareRequest(_StrictModel):
+    """Typed pairwise or cohort regression request for `POST /v1/compare`."""
+
+    candidate_run_id: str | None = None
+    candidate_run_ids: list[str] | None = None
+    baseline_ref: str = Field(default="default", min_length=1)
+    baseline_run_ids: list[str] | None = None
+    policy: QualityGatePolicy = Field(default_factory=QualityGatePolicy)
+    include_markdown: bool = False
+
+    @model_validator(mode="after")
+    def _validate_candidates(self) -> ServiceCompareRequest:
+        has_single = bool(self.candidate_run_id and self.candidate_run_id.strip())
+        has_cohort = bool(self.candidate_run_ids)
+        if not has_single and not has_cohort:
+            raise ValueError(
+                "ServiceCompareRequest requires candidate_run_id or non-empty candidate_run_ids"
+            )
+        return self
+
+
+class ServiceCompareResponse(_StrictModel):
+    """Typed comparison and gate verdict response emitted by `POST /v1/compare`."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    comparison: RunComparisonReport
+    gate: QualityGateResult
+    report: ReportDocument
+    markdown: str | None = None
+
+
+class ServiceReportRequest(_StrictModel):
+    """Typed report rendering request accepted by `POST /v1/reports`."""
+
+    run_id: str | None = None
+    compare_run_id: str | None = None
+    baseline_ref: str | None = None
+    trend_window: int | None = Field(default=None, ge=2)
+    dataset_id: str | None = None
+    model_id: str | None = None
+    title: str | None = None
+    include_markdown: bool = True
+
+    @field_validator("trend_window", mode="before")
+    @classmethod
+    def _validate_window(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        return _reject_strict_int(value, field_name="ServiceReportRequest.trend_window")
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> ServiceReportRequest:
+        if self.run_id is None and self.compare_run_id is None and self.trend_window is None:
+            raise ValueError(
+                "ServiceReportRequest requires at least one of run_id, compare_run_id, "
+                "or trend_window"
+            )
+        return self
+
+
+class ServiceReportResponse(_StrictModel):
+    """Typed report document + optional Markdown response emitted by `POST /v1/reports`."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    report: ReportDocument
+    markdown: str | None = None

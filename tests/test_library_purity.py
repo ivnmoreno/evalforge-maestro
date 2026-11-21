@@ -38,6 +38,7 @@ _HEAVY_OPTIONAL_MODULES = (
     "opentelemetry",
     "opentelemetry_sdk",
     "sqlite3",
+    "http.server",
     "jsonschema",
     "tomllib",
     "tomli",
@@ -120,8 +121,52 @@ def test_library_ast_import_and_logging_boundaries() -> None:
                 f"{rel} must not import CLI module {mod!r}"
             )
 
-        # Core/domain subsystems must never import adapters (only top-level __init__.py façade may)
-        if not rel.startswith("adapters/") and rel != "__init__.py":
+        # Core library modules & adapters must never import the optional HTTP service wrapper
+        if not rel.startswith("service/") and rel != "__init__.py":
+            for mod in imports:
+                assert mod not in {
+                    "http",
+                    "http.server",
+                    "socketserver",
+                    "evalforge_maestro.service",
+                } and not mod.startswith("evalforge_maestro.service."), (
+                    f"Core module {rel} must not import service/server module {mod!r}"
+                )
+
+        # Optional service wrapper keeps HTTP transport lazy in server.py & limits adapter imports
+        if rel.startswith("service/"):
+            if rel != "service/server.py":
+                for mod in imports:
+                    assert mod not in {"http", "http.server", "socketserver"}, (
+                        f"Service module {rel} must not import HTTP server transport ({mod!r})"
+                    )
+            else:
+                module_ast = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+                for top_node in module_ast.body:
+                    top_names_srv: list[str] = []
+                    if isinstance(top_node, ast.Import):
+                        top_names_srv.extend(alias.name for alias in top_node.names)
+                    elif isinstance(top_node, ast.ImportFrom) and top_node.module:
+                        top_names_srv.append(top_node.module)
+                    for top_mod in top_names_srv:
+                        assert top_mod not in {"http", "http.server", "socketserver"}, (
+                            f"{rel} must keep HTTP server import {top_mod!r} lazy"
+                        )
+            for mod in imports:
+                if mod in _FORBIDDEN_ADAPTER_MODULES or mod.startswith(
+                    "evalforge_maestro.adapters"
+                ):
+                    assert mod in {
+                        "evalforge_maestro.adapters.replay",
+                        "evalforge_maestro.adapters.otel",
+                    }, f"Service module {rel} must not import live target adapter {mod!r}"
+
+        # Core/domain subsystems must never import adapters (only boundary entrypoints may)
+        if (
+            not rel.startswith("adapters/")
+            and not rel.startswith("service/")
+            and rel != "__init__.py"
+        ):
             for mod in imports:
                 assert mod not in _FORBIDDEN_ADAPTER_MODULES and not mod.startswith(
                     "evalforge_maestro.adapters"

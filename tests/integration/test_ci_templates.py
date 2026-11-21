@@ -274,3 +274,100 @@ def test_examples_ci_otel_template_validates_and_executes_end_to_end(tmp_path: P
     assert "## Acceptance / Quality Gate" in (tmp_path / "otel-report.md").read_text(
         encoding="utf-8"
     )
+
+
+def test_examples_ci_hybrid_rerank_and_calibration_templates(tmp_path: Path) -> None:
+    repo_ci_dir = Path("examples/ci")
+    work_ci_dir = tmp_path / "examples" / "ci"
+    work_ci_dir.mkdir(parents=True)
+    for fname in (
+        "evalforge-hybrid-rerank.toml",
+        "hybrid-rerank-golden.jsonl",
+        "hybrid-rerank-executions.jsonl",
+        "calibration-samples.jsonl",
+    ):
+        shutil.copy2(repo_ci_dir / fname, work_ci_dir / fname)
+
+    val_proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; from evalforge_maestro.cli import main; "
+                "sys.exit(main(['config', 'validate', '--config', "
+                "'examples/ci/evalforge-hybrid-rerank.toml', '--json']))"
+            ),
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert val_proc.returncode == 0, val_proc.stderr
+    assert ConfigValidationPayload.model_validate_json(val_proc.stdout.strip()).valid is True
+
+    run_proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; from evalforge_maestro.cli import main; "
+                "sys.exit(main(['run', '--config', 'examples/ci/evalforge-hybrid-rerank.toml', "
+                "'--strict', '--json', '--json-out', 'hybrid-report.json', "
+                "'--markdown-out', 'hybrid-report.md']))"
+            ),
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert run_proc.returncode == 0, run_proc.stderr
+    doc = ReportDocument.model_validate_json(run_proc.stdout.strip())
+    assert doc.gate is not None and doc.gate.decision == GateDecision.PASS
+    assert doc.evaluation is not None and doc.evaluation.evaluated_case_count == 4
+    for case_res in doc.evaluation.case_results:
+        for metric_id in (
+            "precision_at_k",
+            "recall_at_k",
+            "mrr",
+            "ndcg_at_k",
+            "groundedness",
+            "answer_relevance",
+            "context_relevance",
+        ):
+            assert case_res.metrics[metric_id].status == MetricStatus.PASS
+    assert (tmp_path / "hybrid-report.json").is_file()
+    assert "## Acceptance / Quality Gate" in (tmp_path / "hybrid-report.md").read_text(
+        encoding="utf-8"
+    )
+
+    cal_proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; from evalforge_maestro.cli import main; "
+                "sys.exit(main(['calibrate', '--samples', 'examples/ci/calibration-samples.jsonl', "
+                "'--metric', 'groundedness', '--min-agreement', '80.0', "
+                "'--mock', '--local-only', '--strict', '--json', "
+                "'--json-out', 'cal-report.json', '--markdown-out', 'cal-report.md']))"
+            ),
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert cal_proc.returncode == 0, cal_proc.stderr
+    cal_doc = ReportDocument.model_validate_json(cal_proc.stdout.strip())
+    assert cal_doc.calibration is not None
+    assert cal_doc.calibration.valid_cases == 4
+    assert cal_doc.calibration_gate is not None
+    assert cal_doc.calibration_gate.passed is True
+    assert cal_doc.calibration_gate.observed_agreement is not None
+    assert cal_doc.calibration_gate.observed_agreement >= 80.0
+    assert (tmp_path / "cal-report.json").is_file()
+    cal_md = (tmp_path / "cal-report.md").read_text(encoding="utf-8")
+    assert "## Evaluation" in cal_md
+    assert "Calibration Gate Decision" in cal_md

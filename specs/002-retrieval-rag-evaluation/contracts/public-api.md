@@ -154,7 +154,7 @@ class DocpipeAdapter:
 ```
 
 - Raises `AdapterError` in `__init__` if `mode` is not `"answer_detailed"` or `"retrieve"`.
-- When `client is None`, `__init__` lazy-imports `docpipe_maestro` and raises `MissingExtraError(extra="docpipe", package="docpipe-maestro")` if missing.
+- When `client is None`, `__init__` lazy-imports `docpipe_maestro` and raises `MissingExtraError(extra="docpipe-maestro", package="docpipe-maestro")` if missing.
 - Injected `client` must expose `retrieve(...)` (plus `answer_detailed(...)`, and optionally `build_chat_messages(...)` or `build_prompt(...)`, when `mode="answer_detailed"`).
 - `case.input` query extraction accepts a non-empty `str` or mapping keys `"question"` -> `"query"` -> `"input"`; invalid/empty inputs capture diagnostics into `ExecutionResult.errors`.
 - Option merge & fingerprinting: explicit non-`None` `collection` and `persist_dir` override keys of the same name inside `retrieve_kwargs`; redacted `{mode, collection, persist_dir, retrieve_kwargs, answer_kwargs}` hashes into `config_fingerprint` and `adapter_metadata["config"]`.

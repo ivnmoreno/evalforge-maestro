@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -78,6 +79,7 @@ from evalforge_maestro.types import (
     ReportDocument,
     RunComparisonReport,
     RunRecord,
+    ServiceConfig,
     TrendReport,
 )
 
@@ -220,6 +222,11 @@ def _args_to_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
         "mandatory_only",
         "errors_only",
         "anomalies_only",
+        "host",
+        "port",
+        "auth_token",
+        "max_request_bytes",
+        "allow_remote_judges",
     ):
         raw.pop(meta_key, None)
 
@@ -1032,6 +1039,57 @@ def _handle_query(args: argparse.Namespace, resolved: CLIResolvedConfig) -> int:
     return 0
 
 
+def _handle_serve(
+    args: argparse.Namespace,
+    resolved: CLIResolvedConfig,
+    raw_api_key: str | None,
+    logger: CLIStructuredLogger,
+    *,
+    raw_embedding_api_key: str | None = None,
+) -> int:
+    from evalforge_maestro.service import serve_http, validate_service_bind_policy
+
+    allow_remote = bool(getattr(args, "allow_remote_judges", False))
+    explicit_local_only = hasattr(args, "local_only")
+    if explicit_local_only and allow_remote:
+        raise ConfigurationError("Cannot combine --local-only with --allow-remote-judges")
+    local_only = not allow_remote
+
+    raw_token = getattr(args, "auth_token", None) or os.environ.get("EVALFORGE_SERVICE_TOKEN")
+    auth_token = str(raw_token).strip() if raw_token and str(raw_token).strip() else None
+
+    try:
+        svc_cfg = ServiceConfig(
+            host=str(getattr(args, "host", "127.0.0.1")),
+            port=int(getattr(args, "port", 8787)),
+            storage_dir=str(resolved.storage_dir),
+            local_only=local_only,
+            block_pii=resolved.security.block_pii,
+            mock_mode=resolved.judge.mock_mode,
+            max_request_bytes=int(getattr(args, "max_request_bytes", 10_485_760)),
+            auth_token_configured=auth_token is not None,
+        )
+    except ValidationError as exc:
+        raise ConfigurationError(f"Invalid serve configuration: {exc}") from exc
+
+    validate_service_bind_policy(svc_cfg, auth_token=auth_token)
+    logger.info(
+        f"Starting EvalForge service on http://{svc_cfg.host}:{svc_cfg.port} "
+        f"(storage_dir={svc_cfg.storage_dir}, local_only={svc_cfg.local_only}, "
+        f"auth={svc_cfg.auth_token_configured})"
+    )
+    try:
+        serve_http(
+            svc_cfg,
+            auth_token=auth_token,
+            judge_api_key=raw_api_key,
+            embedding_api_key=raw_embedding_api_key,
+        )
+    except KeyboardInterrupt:  # pragma: no cover - interactive shutdown
+        logger.info("EvalForge HTTP service interrupted cleanly.")
+    return 0
+
+
 def _map_exception_to_exit_code(exc: BaseException) -> tuple[int, str | None]:
     if isinstance(exc, LocalOnlyPolicyError):
         return 4, "Review --local-only / --block-pii settings and remove remote endpoints or PII."
@@ -1089,6 +1147,14 @@ def dispatch_command(args: argparse.Namespace) -> int:
             return _handle_index(args, resolved)
         if cmd == "query":
             return _handle_query(args, resolved)
+        if cmd == "serve":
+            return _handle_serve(
+                args,
+                resolved,
+                raw_api_key,
+                logger,
+                raw_embedding_api_key=raw_embedding_api_key,
+            )
         raise ConfigurationError(f"Unsupported CLI subcommand: {cmd!r}")
     except EvalforgeError as exc:
         code, hint = _map_exception_to_exit_code(exc)

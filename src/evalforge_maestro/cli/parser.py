@@ -773,6 +773,58 @@ def _add_query_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
     p_cases.add_argument("--offset", type=int, default=0)
 
 
+def _add_serve_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
+    p = subparsers.add_parser(
+        "serve",
+        help="Run the optional local/authenticated HTTP evaluation service wrapper.",
+    )
+    _add_global_flags(p)
+    p.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help=(
+            "Bind host (default: 127.0.0.1). Non-loopback binding requires --auth-token "
+            "or EVALFORGE_SERVICE_TOKEN."
+        ),
+    )
+    p.add_argument("--port", type=int, default=8787, help="TCP listen port (default: 8787).")
+    p.add_argument(
+        "--auth-token",
+        default=None,
+        help="Optional Bearer token overriding EVALFORGE_SERVICE_TOKEN.",
+    )
+    p.add_argument(
+        "--max-request-bytes",
+        type=int,
+        default=10_485_760,
+        help="Maximum HTTP request payload size in bytes (default: 10485760).",
+    )
+    p.add_argument(
+        "--local-only",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Block outbound non-loopback judge/embedding endpoints (default for serve).",
+    )
+    p.add_argument(
+        "--allow-remote-judges",
+        action="store_true",
+        default=False,
+        help="Explicitly allow remote judge/embedding endpoints when serving HTTP requests.",
+    )
+    p.add_argument(
+        "--block-pii",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Block outbound remote judge/embedding requests containing PII/secrets.",
+    )
+    p.add_argument(
+        "--mock",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Evaluate judge/embedding metrics deterministically offline in mock mode.",
+    )
+
+
 def build_parser() -> _StrictArgumentParser:
     """Build top-level CLI parser with zero heavy or config-file imports."""
     parser = _StrictArgumentParser(
@@ -798,6 +850,7 @@ def build_parser() -> _StrictArgumentParser:
     _add_ingest_otel_parser(subparsers)
     _add_index_parser(subparsers)
     _add_query_parser(subparsers)
+    _add_serve_parser(subparsers)
     return parser
 
 

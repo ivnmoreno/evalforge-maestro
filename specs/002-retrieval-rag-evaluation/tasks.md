@@ -27,9 +27,9 @@ description: "Actionable, dependency-ordered task breakdown for Milestone 2: Ret
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-**Purpose**: Configure optional `[docpipe]` packaging extra and lockfile metadata without polluting minimal core installs
+**Purpose**: Configure optional `[docpipe-maestro]` packaging extra and lockfile metadata without polluting minimal core installs
 
-- [X] T001 Add `[project.optional-dependencies]` extra `docpipe = ["docpipe-maestro>=0.2"]` to `pyproject.toml` and re-lock `uv.lock` while keeping core `uv sync --extra dev` isolated from `docpipe_maestro`
+- [X] T001 Add `[project.optional-dependencies]` extra `docpipe-maestro = ["docpipe-maestro>=0.2"]` to `pyproject.toml` and re-lock `uv.lock` while keeping core `uv sync --extra dev` isolated from `docpipe_maestro`
 
 ---
 
@@ -108,7 +108,7 @@ description: "Actionable, dependency-ordered task breakdown for Milestone 2: Ret
 
 ## Phase 6: User Story 4 — Integrate Optional `docpipe-maestro` Pipelines and Evaluation Fixtures Safely (Priority: P4)
 
-**Goal**: Provide lazy-imported `DocpipeAdapter` (`mode="answer_detailed"` / `"retrieve"`, raising `MissingExtraError` when `[docpipe]` absent) and dependency-free `load_docpipe_fixture` / `DatasetEngine.from_docpipe_fixture` supporting real `docpipe-maestro` `EvalFixture` files
+**Goal**: Provide lazy-imported `DocpipeAdapter` (`mode="answer_detailed"` / `"retrieve"`, raising `MissingExtraError` when `[docpipe-maestro]` absent) and dependency-free `load_docpipe_fixture` / `DatasetEngine.from_docpipe_fixture` supporting real `docpipe-maestro` `EvalFixture` files
 
 **Independent Test**: Test `DocpipeAdapter` with simulated `docpipe_maestro` doubles (`retrieve()` and `answer_detailed()`), confirm `MissingExtraError` when `docpipe_maestro` is absent, and import JSONL, JSON array, and `EvalFixture` `"queries"`/`"cases"`/`"items"` files without `docpipe_maestro` installed
 
@@ -120,11 +120,11 @@ description: "Actionable, dependency-ordered task breakdown for Milestone 2: Ret
 
 - [X] T015 [P] [US4] Implement dependency-free `load_docpipe_fixture` supporting JSONL streams, JSON arrays, and `{"queries": [...]}` / `{"cases": [...]}` / `{"items": [...]}` envelopes (mapping `id`/`case_id` or deterministic 1-based `case-{index}`, `question`/`query`/`input`, `relevant_ids`/`expected_ids`/`expected_context`, optional `reference`/`expected_answer`/`answer`/`relevance`, and `CaseMetadata` `collection`/`profile`/`notes`) into `DatasetEngine` in `src/evalforge_maestro/datasets/docpipe_fixture.py` citing `data-model.md` (`EvaluationCase.expected_context`, `ExpectedContextItem.id`, `ExpectedContextItem.relevance`)
 - [X] T016 [US4] Add `DatasetEngine.from_docpipe_fixture` classmethod in `src/evalforge_maestro/datasets/engine.py` and export `load_docpipe_fixture` per `contracts/public-api.md` in `src/evalforge_maestro/datasets/__init__.py`
-- [X] T017 [P] [US4] Implement lazy `DocpipeAdapter` (validating `mode` with `AdapterError`, `case.input` `str`/mapping query extraction, explicit `collection`/`persist_dir` precedence over `retrieve_kwargs`, `mode="answer_detailed"` calling `retrieve()` + `build_chat_messages()`/`build_prompt()` + `answer_detailed()` mapping `ExecutionResult.output`/`TokenUsage`/`truncated`/`warnings`/`adapter_metadata`, `mode="retrieve"` calling `retrieve()` with `output=None`, raising `MissingExtraError(extra="docpipe", package="docpipe-maestro")` when `client is None` and `docpipe_maestro` missing, secret redaction & `config_fingerprint`) in `src/evalforge_maestro/adapters/docpipe.py` citing `data-model.md` (`RetrievedChunk.id`, `RetrievedChunk.text`, `RetrievedChunk.parent_id`, `RetrievedChunk.rank`, `RetrievedChunk.score`, `RetrievedChunk.metadata`)
+- [X] T017 [P] [US4] Implement lazy `DocpipeAdapter` (validating `mode` with `AdapterError`, `case.input` `str`/mapping query extraction, explicit `collection`/`persist_dir` precedence over `retrieve_kwargs`, `mode="answer_detailed"` calling `retrieve()` + `build_chat_messages()`/`build_prompt()` + `answer_detailed()` mapping `ExecutionResult.output`/`TokenUsage`/`truncated`/`warnings`/`adapter_metadata`, `mode="retrieve"` calling `retrieve()` with `output=None`, raising `MissingExtraError(extra="docpipe-maestro", package="docpipe-maestro")` when `client is None` and `docpipe_maestro` missing, secret redaction & `config_fingerprint`) in `src/evalforge_maestro/adapters/docpipe.py` citing `data-model.md` (`RetrievedChunk.id`, `RetrievedChunk.text`, `RetrievedChunk.parent_id`, `RetrievedChunk.rank`, `RetrievedChunk.score`, `RetrievedChunk.metadata`)
 - [X] T018 [US4] Export `DocpipeAdapter` per `contracts/public-api.md` in `src/evalforge_maestro/adapters/__init__.py` without eagerly importing `docpipe_maestro`
 - [X] T019 [US4] Add end-to-end `DocpipeAdapter` + `load_docpipe_fixture` persistence integration tests (`retrieve` and `answer_detailed` runs saved to `LocalRunStore`) in `tests/integration/test_rag_decoupled_eval.py`
 
-**Checkpoint**: All four Milestone 002 user stories are independently functional and cleanly isolated from `[docpipe]`
+**Checkpoint**: All four Milestone 002 user stories are independently functional and cleanly isolated from `[docpipe-maestro]`
 
 ---
 

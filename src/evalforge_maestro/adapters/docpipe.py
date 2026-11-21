@@ -65,7 +65,7 @@ def _resolve_docpipe_functions(
         try:
             root_mod = importlib.import_module("docpipe_maestro")
         except ImportError as exc:
-            raise MissingExtraError(extra="docpipe", package="docpipe-maestro") from exc
+            raise MissingExtraError(extra="docpipe-maestro", package="docpipe-maestro") from exc
 
         retrieve_fn = getattr(root_mod, "retrieve", None)
         answer_fn = getattr(root_mod, "answer_detailed", None)
