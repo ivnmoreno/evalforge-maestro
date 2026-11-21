@@ -34,6 +34,7 @@ def test_examples_ci_template_executes_end_to_end(tmp_path: Path) -> None:
     readme_text = (repo_ci_dir / "README.md").read_text(encoding="utf-8")
     assert "evalforge.toml" in readme_text
     assert "evalforge-docpipe.toml" in readme_text
+    assert "evalforge-otel.toml" in readme_text
 
     work_ci_dir = tmp_path / "examples" / "ci"
     work_ci_dir.mkdir(parents=True)
@@ -214,5 +215,62 @@ def test_examples_ci_docpipe_template_validates_and_executes_end_to_end(tmp_path
             assert case_res.metrics[metric_id].score == 1.0
     assert (tmp_path / "docpipe-report.json").is_file()
     assert "## Acceptance / Quality Gate" in (tmp_path / "docpipe-report.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_examples_ci_otel_template_validates_and_executes_end_to_end(tmp_path: Path) -> None:
+    repo_ci_dir = Path("examples/ci")
+    work_ci_dir = tmp_path / "examples" / "ci"
+    work_ci_dir.mkdir(parents=True)
+    for fname in ("evalforge-otel.toml", "golden-sample.jsonl", "otel-traces-sample.json"):
+        shutil.copy2(repo_ci_dir / fname, work_ci_dir / fname)
+
+    val_proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; from evalforge_maestro.cli import main; "
+                "sys.exit(main(['config', 'validate', '--config', "
+                "'examples/ci/evalforge-otel.toml', '--json']))"
+            ),
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert val_proc.returncode == 0, val_proc.stderr
+    assert ConfigValidationPayload.model_validate_json(val_proc.stdout.strip()).valid is True
+
+    run_proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; from evalforge_maestro.cli import main; "
+                "sys.exit(main(['run', '--config', 'examples/ci/evalforge-otel.toml', "
+                "'--strict', '--json', '--json-out', 'otel-report.json', "
+                "'--markdown-out', 'otel-report.md']))"
+            ),
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert run_proc.returncode == 0, run_proc.stderr
+    doc = ReportDocument.model_validate_json(run_proc.stdout.strip())
+    assert doc.gate is not None
+    assert doc.gate.decision == GateDecision.PASS
+    assert doc.evaluation is not None
+    assert doc.evaluation.evaluated_case_count == 3
+    for case_res in doc.evaluation.case_results:
+        assert case_res.metrics["normalized_match"].status == MetricStatus.PASS
+        assert case_res.metrics["precision_at_k"].score == 1.0
+        assert case_res.metrics["recall_at_k"].score == 1.0
+    assert (tmp_path / "otel-report.json").is_file()
+    assert "## Acceptance / Quality Gate" in (tmp_path / "otel-report.md").read_text(
         encoding="utf-8"
     )

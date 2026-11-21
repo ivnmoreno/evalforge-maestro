@@ -35,6 +35,8 @@ _HEAVY_OPTIONAL_MODULES = (
     "llama_index",
     "numpy",
     "scipy",
+    "opentelemetry",
+    "opentelemetry_sdk",
     "jsonschema",
     "tomllib",
     "tomli",

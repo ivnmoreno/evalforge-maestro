@@ -318,3 +318,71 @@ def test_embedding_and_statistical_config_precedence_isolation_and_secret_maskin
         resolve_cli_config(cwd=iso_dir, environ={"EVALFORGE_CONFIDENCE_LEVEL": "1.5"})
     with pytest.raises(ConfigurationError):
         resolve_cli_config(cwd=iso_dir, environ={"EVALFORGE_EMBEDDING_AGGREGATION": "median"})
+
+
+def test_otel_config_five_tier_precedence_and_validation(tmp_path: Path) -> None:
+    cfg = tmp_path / "evalforge.toml"
+    cfg.write_text(
+        "[run]\n"
+        'otel_traces = "toml_traces.json"\n'
+        "[otel]\n"
+        'case_id_attribute = "toml.case_id"\n'
+        'input_attribute = "toml.input"\n'
+        'output_attribute = "toml.output"\n'
+        'model_attribute = "toml.model"\n'
+        'service_version_attribute = "toml.version"\n'
+        'step_kind_attribute = "toml.kind"\n'
+        'tool_name_attribute = "toml.tool.name"\n'
+        'tool_arguments_attribute = "toml.tool.args"\n'
+        'tool_result_attribute = "toml.tool.result"\n'
+        'retrieval_documents_attribute = "toml.docs"\n'
+        'timestamp_unit = "ms"\n'
+        "match_dataset_by_input = false\n",
+        encoding="utf-8",
+    )
+    env_file = tmp_path / ".env.otel"
+    env_file.write_text(
+        "EVALFORGE_OTEL_INPUT_ATTR=envfile.input\n"
+        "EVALFORGE_OTEL_OUTPUT_ATTR=envfile.output\n"
+        "EVALFORGE_OTEL_MATCH_INPUT=true\n",
+        encoding="utf-8",
+    )
+
+    resolved, _, _, _ = resolve_cli_config_with_secrets(
+        cli_overrides={
+            "otel_case_id_attr": "cli.case_id",
+            "otel_timestamp_unit": "us",
+        },
+        config_path=cfg,
+        env_file=env_file,
+        cwd=tmp_path,
+        environ={
+            "EVALFORGE_OTEL_OUTPUT_ATTR": "osenv.output",
+            "EVALFORGE_OTEL_TOOL_NAME_ATTR": "osenv.tool.name",
+        },
+    )
+
+    assert resolved.otel_traces == "toml_traces.json"
+    assert resolved.otel.case_id_attribute == "cli.case_id"
+    assert resolved.otel.output_attribute == "osenv.output"
+    assert resolved.otel.input_attribute == "envfile.input"
+    assert resolved.otel.model_attribute == "toml.model"
+    assert resolved.otel.service_version_attribute == "toml.version"
+    assert resolved.otel.step_kind_attribute == "toml.kind"
+    assert resolved.otel.tool_name_attribute == "osenv.tool.name"
+    assert resolved.otel.tool_arguments_attribute == "toml.tool.args"
+    assert resolved.otel.tool_result_attribute == "toml.tool.result"
+    assert resolved.otel.retrieval_documents_attribute == "toml.docs"
+    assert resolved.otel.timestamp_unit.value == "us"
+    assert resolved.otel.match_dataset_by_input is True
+
+    bad_otel = tmp_path / "bad_otel.toml"
+    bad_otel.write_text("[otel]\nunknown_otel_flag = 1\n", encoding="utf-8")
+    with pytest.raises(ConfigurationError):
+        resolve_cli_config(config_path=bad_otel, environ={})
+
+    with pytest.raises(ConfigurationError):
+        resolve_cli_config(
+            cwd=tmp_path,
+            environ={"EVALFORGE_OTEL_TIMESTAMP_UNIT": "invalid-unit"},
+        )

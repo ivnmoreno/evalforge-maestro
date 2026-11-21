@@ -86,7 +86,7 @@ def test_m5_runtime_models_validate_against_contract_schemas() -> None:
     )
     m5_cfg = cfg.model_dump(mode="json")
     m5_cfg["target"].pop("agent_extractors", None)
-    for k in ("repeats", "baseline_runs", "embedding"):
+    for k in ("repeats", "baseline_runs", "embedding", "otel_traces", "otel"):
         m5_cfg.pop(k, None)
     m5_cfg["execution"].pop("embedding_config_fingerprint", None)
     for k in ("confidence_level", "min_statistical_samples", "fail_on_significant_regression"):

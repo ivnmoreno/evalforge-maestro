@@ -367,36 +367,54 @@ def build_target_adapter(
     """Resolve live adapter (callable, rag, docpipe) or validated offline ReplayAdapter."""
     t_cfg = resolved.target
     has_executions = resolved.executions_path is not None
+    has_otel = resolved.otel_traces is not None
     has_live_entrypoint = t_cfg.entrypoint is not None
     explicit_type = t_cfg.target_type
 
-    if has_executions and (
+    if has_executions and has_otel:
+        raise ConfigurationError(
+            "Conflicting target options: --otel-traces cannot be combined with --executions"
+        )
+
+    if (has_executions or has_otel) and (
         has_live_entrypoint or (explicit_type is not None and explicit_type != TargetType.REPLAY)
     ):
         raise ConfigurationError(
-            "Conflicting target options: --executions replay cannot be combined with a live target"
+            "Conflicting target options: offline replay (--executions / --otel-traces) "
+            "cannot be combined with a live target"
         )
 
     effective_type = explicit_type
     if effective_type is None:
-        if has_executions:
+        if has_executions or has_otel:
             effective_type = TargetType.REPLAY
         elif has_live_entrypoint:
             effective_type = TargetType.CALLABLE
         else:
             raise ConfigurationError(
-                "No target configured. Pass --executions <path> or --target <module:symbol> "
-                "(or configure [target] in evalforge.toml)."
+                "No target configured. Pass --executions <path>, --otel-traces <path>, "
+                "or --target <module:symbol> (or configure [target] in evalforge.toml)."
             )
 
     if effective_type == TargetType.REPLAY:
-        if not resolved.executions_path:
-            raise ConfigurationError("Replay target mode requires --executions <path>")
-        adapter = ReplayAdapter.from_file(
-            resolved.executions_path,
-            system_version=t_cfg.system_version,
-            model_id=t_cfg.model_id,
-        )
+        if has_otel:
+            adapter = ReplayAdapter.from_otel_file(
+                resolved.otel_traces or "",
+                extractors=resolved.otel,
+                dataset=dataset,
+                system_version=t_cfg.system_version,
+                model_id=t_cfg.model_id,
+            )
+        elif resolved.executions_path:
+            adapter = ReplayAdapter.from_file(
+                resolved.executions_path,
+                system_version=t_cfg.system_version,
+                model_id=t_cfg.model_id,
+            )
+        else:
+            raise ConfigurationError(
+                "Replay target mode requires --executions <path> or --otel-traces <path>"
+            )
         _validate_replay_alignment(
             dataset,
             adapter,

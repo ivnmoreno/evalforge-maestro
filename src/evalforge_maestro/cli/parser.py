@@ -90,6 +90,71 @@ def _add_export_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_otel_extractor_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--otel-case-id-attr",
+        default=argparse.SUPPRESS,
+        help="OTel span attribute key providing EvaluationCase.id.",
+    )
+    p.add_argument(
+        "--otel-input-attr",
+        default=argparse.SUPPRESS,
+        help="OTel span attribute key overriding case input extraction.",
+    )
+    p.add_argument(
+        "--otel-output-attr",
+        default=argparse.SUPPRESS,
+        help="OTel span attribute key overriding final output extraction.",
+    )
+    p.add_argument(
+        "--otel-model-attr",
+        default=argparse.SUPPRESS,
+        help="OTel span attribute key overriding model_id extraction.",
+    )
+    p.add_argument(
+        "--otel-service-version-attr",
+        default=argparse.SUPPRESS,
+        help="OTel span/resource attribute key overriding system_version extraction.",
+    )
+    p.add_argument(
+        "--otel-step-kind-attr",
+        default=argparse.SUPPRESS,
+        help="OTel span attribute key overriding TraceStepKind classification.",
+    )
+    p.add_argument(
+        "--otel-tool-name-attr",
+        default=argparse.SUPPRESS,
+        help="OTel span attribute key overriding tool name extraction.",
+    )
+    p.add_argument(
+        "--otel-tool-args-attr",
+        default=argparse.SUPPRESS,
+        help="OTel span attribute key overriding tool arguments extraction.",
+    )
+    p.add_argument(
+        "--otel-tool-result-attr",
+        default=argparse.SUPPRESS,
+        help="OTel span attribute key overriding tool result extraction.",
+    )
+    p.add_argument(
+        "--otel-retrieval-attr",
+        default=argparse.SUPPRESS,
+        help="OTel span attribute key overriding retrieved chunk documents extraction.",
+    )
+    p.add_argument(
+        "--otel-timestamp-unit",
+        choices=["auto", "ns", "us", "ms", "s"],
+        default=argparse.SUPPRESS,
+        help="Timestamp unit for numeric OTel span start/end timestamps (default: auto).",
+    )
+    p.add_argument(
+        "--otel-match-input",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Allow unambiguous fallback matching of trace input to EvaluationCase.input.",
+    )
+
+
 def _add_run_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
     p = subparsers.add_parser(
         "run",
@@ -105,6 +170,12 @@ def _add_run_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
         default=argparse.SUPPRESS,
         help="Pre-captured ExecutionResult trace file (JSONL/JSON/RunRecord) for offline replay.",
     )
+    p.add_argument(
+        "--otel-traces",
+        default=argparse.SUPPRESS,
+        help="OpenTelemetry span export file (OTLP JSON/array/JSONL) for offline evaluation.",
+    )
+    _add_otel_extractor_flags(p)
     p.add_argument(
         "--target",
         default=argparse.SUPPRESS,
@@ -592,6 +663,30 @@ def _add_config_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
     _add_global_flags(p_val)
 
 
+def _add_ingest_otel_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
+    p = subparsers.add_parser(
+        "ingest-otel",
+        help="Normalize OTel trace exports into replayable ExecutionResult JSON/JSONL records.",
+    )
+    p.add_argument(
+        "otel_path",
+        help="Path to OTLP JSON, flat span array JSON, or JSONL span export file.",
+    )
+    _add_global_flags(p)
+    p.add_argument("--dataset", default=argparse.SUPPRESS, help="Optional dataset JSONL path.")
+    p.add_argument("--dataset-id", default=argparse.SUPPRESS, help="Logical dataset identifier.")
+    p.add_argument("--dataset-version", default=argparse.SUPPRESS, help="Dataset version label.")
+    p.add_argument(
+        "--output",
+        dest="otel_output",
+        default=None,
+        help="Write ExecutionResult records to .json (array) or .jsonl file.",
+    )
+    p.add_argument("--system-version", default=argparse.SUPPRESS, help="Target system version.")
+    p.add_argument("--model-id", default=argparse.SUPPRESS, help="Target model identifier.")
+    _add_otel_extractor_flags(p)
+
+
 def build_parser() -> _StrictArgumentParser:
     """Build top-level CLI parser with zero heavy or config-file imports."""
     parser = _StrictArgumentParser(
@@ -614,6 +709,7 @@ def build_parser() -> _StrictArgumentParser:
     _add_baseline_parser(subparsers)
     _add_report_parser(subparsers)
     _add_config_parser(subparsers)
+    _add_ingest_otel_parser(subparsers)
     return parser
 
 
