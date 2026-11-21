@@ -142,7 +142,7 @@ def test_m6_runtime_models_validate_against_contract_schemas() -> None:
         metrics=[MetricSpecConfig(metric_id="tool_selection")],
     )
     cfg_m6 = cfg.model_dump(mode="json")
-    for k in ("repeats", "baseline_runs", "embedding"):
+    for k in ("repeats", "baseline_runs", "embedding", "otel_traces", "otel"):
         cfg_m6.pop(k, None)
     cfg_m6["execution"].pop("embedding_config_fingerprint", None)
     for k in ("confidence_level", "min_statistical_samples", "fail_on_significant_regression"):

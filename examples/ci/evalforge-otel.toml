@@ -1,0 +1,37 @@
+[run]
+dataset = "examples/ci/golden-sample.jsonl"
+otel_traces = "examples/ci/otel-traces-sample.json"
+max_concurrency = 4
+strict = true
+
+[otel]
+timestamp_unit = "ns"
+match_dataset_by_input = false
+
+[metrics]
+enabled = [
+  "normalized_match",
+  "precision_at_k",
+  "recall_at_k",
+  "tool_selection",
+  "policy_compliance",
+]
+
+[metrics.precision_at_k]
+k = 1
+threshold = 0.5
+
+[metrics.recall_at_k]
+k = 1
+threshold = 0.5
+
+[security]
+local_only = true
+block_pii = false
+
+[gate]
+min_score = 0.80
+max_regression_drop = 0.05
+max_inconclusive_rate = 0.05
+fail_on_drift = false
+fail_on_anomaly = false

@@ -27,6 +27,8 @@ from evalforge_maestro.types import (
     EmbeddingAggregation,
     MetricSpecConfig,
     OrchestratorConfig,
+    OtelExtractorConfig,
+    OtelTimestampUnit,
     QualityGatePolicy,
     ResolvedEmbeddingSettings,
     ResolvedJudgeSettings,
@@ -51,6 +53,7 @@ class _TomlRunSection(_TomlStrictSection):
     dataset_id: str | None = None
     dataset_version: str | None = None
     executions: str | None = None
+    otel_traces: str | None = None
     run_id: str | None = None
     repeats: int | None = None
     baseline: str | None = None
@@ -150,6 +153,21 @@ class _TomlLoggingSection(_TomlStrictSection):
     log_json: bool | None = None
 
 
+class _TomlOtelSection(_TomlStrictSection):
+    case_id_attribute: str | None = None
+    input_attribute: str | None = None
+    output_attribute: str | None = None
+    model_attribute: str | None = None
+    service_version_attribute: str | None = None
+    step_kind_attribute: str | None = None
+    tool_name_attribute: str | None = None
+    tool_arguments_attribute: str | None = None
+    tool_result_attribute: str | None = None
+    retrieval_documents_attribute: str | None = None
+    timestamp_unit: str | None = None
+    match_dataset_by_input: bool | None = None
+
+
 class _TomlRootConfig(_TomlStrictSection):
     run: _TomlRunSection | None = None
     target: _TomlTargetSection | None = None
@@ -159,6 +177,7 @@ class _TomlRootConfig(_TomlStrictSection):
     security: _TomlSecuritySection | None = None
     gate: _TomlGateSection | None = None
     logging: _TomlLoggingSection | None = None
+    otel: _TomlOtelSection | None = None
 
 
 def _load_toml_file(path: Path) -> tuple[dict[str, Any], _TomlRootConfig]:
@@ -555,6 +574,7 @@ def _resolve_target_section(
     target_sec: _TomlTargetSection,
     *,
     executions_path: str | None,
+    otel_traces_path: str | None = None,
 ) -> ResolvedTargetConfig:
     target_type_raw = lookup.resolve(
         "target.type",
@@ -643,7 +663,11 @@ def _resolve_target_section(
             default=False,
         )
     )
-    if target_type_raw is None and executions_path is not None and not target_entrypoint:
+    if (
+        target_type_raw is None
+        and (executions_path is not None or otel_traces_path is not None)
+        and not target_entrypoint
+    ):
         target_type_raw = TargetType.REPLAY.value
 
     return ResolvedTargetConfig(
@@ -1054,6 +1078,64 @@ def _resolve_gate_section(lookup: _TierLookup, gate_sec: _TomlGateSection) -> Qu
     )
 
 
+_OTEL_ATTR_SPECS: tuple[tuple[str, str, str], ...] = (
+    ("case_id_attribute", "otel_case_id_attr", "EVALFORGE_OTEL_CASE_ID_ATTR"),
+    ("input_attribute", "otel_input_attr", "EVALFORGE_OTEL_INPUT_ATTR"),
+    ("output_attribute", "otel_output_attr", "EVALFORGE_OTEL_OUTPUT_ATTR"),
+    ("model_attribute", "otel_model_attr", "EVALFORGE_OTEL_MODEL_ATTR"),
+    (
+        "service_version_attribute",
+        "otel_service_version_attr",
+        "EVALFORGE_OTEL_SERVICE_VERSION_ATTR",
+    ),
+    ("step_kind_attribute", "otel_step_kind_attr", "EVALFORGE_OTEL_STEP_KIND_ATTR"),
+    ("tool_name_attribute", "otel_tool_name_attr", "EVALFORGE_OTEL_TOOL_NAME_ATTR"),
+    ("tool_arguments_attribute", "otel_tool_args_attr", "EVALFORGE_OTEL_TOOL_ARGS_ATTR"),
+    ("tool_result_attribute", "otel_tool_result_attr", "EVALFORGE_OTEL_TOOL_RESULT_ATTR"),
+    ("retrieval_documents_attribute", "otel_retrieval_attr", "EVALFORGE_OTEL_RETRIEVAL_ATTR"),
+)
+
+
+def _resolve_otel_section(lookup: _TierLookup, otel_sec: _TomlOtelSection) -> OtelExtractorConfig:
+    resolved_attrs: dict[str, Any] = {}
+    for field_name, cli_key, env_var in _OTEL_ATTR_SPECS:
+        resolved_attrs[field_name] = lookup.resolve(
+            f"otel.{field_name}",
+            cli_key=cli_key,
+            env_var=env_var,
+            toml_val=getattr(otel_sec, field_name),
+        )
+    raw_unit = lookup.resolve(
+        "otel.timestamp_unit",
+        cli_key="otel_timestamp_unit",
+        env_var="EVALFORGE_OTEL_TIMESTAMP_UNIT",
+        toml_val=otel_sec.timestamp_unit,
+        default=OtelTimestampUnit.AUTO.value,
+    )
+    try:
+        unit = OtelTimestampUnit(str(raw_unit).strip().lower())
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"Invalid otel timestamp_unit {raw_unit!r}; expected auto, ns, us, ms, or s"
+        ) from exc
+
+    match_input = bool(
+        lookup.resolve(
+            "otel.match_dataset_by_input",
+            cli_key="otel_match_input",
+            env_var="EVALFORGE_OTEL_MATCH_INPUT",
+            env_parser="bool",
+            toml_val=otel_sec.match_dataset_by_input,
+            default=False,
+        )
+    )
+    return OtelExtractorConfig(
+        **resolved_attrs,
+        timestamp_unit=unit,
+        match_dataset_by_input=match_input,
+    )
+
+
 def resolve_cli_config_with_secrets(
     *,
     cli_overrides: Mapping[str, Any] | None = None,
@@ -1087,6 +1169,7 @@ def resolve_cli_config_with_secrets(
     sec_sec = toml_model.security or _TomlSecuritySection()
     gate_sec = toml_model.gate or _TomlGateSection()
     log_sec = toml_model.logging or _TomlLoggingSection()
+    otel_sec = toml_model.otel or _TomlOtelSection()
 
     if judge_sec.api_key and judge_sec.api_key.strip():
         warnings.append(
@@ -1118,6 +1201,12 @@ def resolve_cli_config_with_secrets(
         cli_key="executions",
         env_var="EVALFORGE_EXECUTIONS",
         toml_val=run_sec.executions,
+    )
+    otel_traces_path = lookup.resolve(
+        "otel_traces",
+        cli_key="otel_traces",
+        env_var="EVALFORGE_OTEL_TRACES",
+        toml_val=run_sec.otel_traces,
     )
     run_id = lookup.resolve("run_id", env_var="EVALFORGE_RUN_ID", toml_val=run_sec.run_id)
     repeats = lookup.resolve(
@@ -1157,7 +1246,9 @@ def resolve_cli_config_with_secrets(
             lookup,
             target_sec,
             executions_path=str(executions_path) if executions_path is not None else None,
+            otel_traces_path=str(otel_traces_path) if otel_traces_path is not None else None,
         )
+        otel_cfg = _resolve_otel_section(lookup, otel_sec)
         resolved_metrics = _resolve_metrics_specs(
             lookup,
             cli_map=cli_map,
@@ -1200,6 +1291,8 @@ def resolve_cli_config_with_secrets(
             dataset_id=str(dataset_id) if dataset_id is not None else None,
             dataset_version=str(dataset_version) if dataset_version is not None else None,
             executions_path=str(executions_path) if executions_path is not None else None,
+            otel_traces=str(otel_traces_path) if otel_traces_path is not None else None,
+            otel=otel_cfg,
             run_id=str(run_id) if run_id is not None else None,
             repeats=repeats,
             baseline=str(baseline) if baseline is not None else None,

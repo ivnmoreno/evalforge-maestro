@@ -204,6 +204,16 @@ class TraceStepKind(str, Enum):
     OTHER = "other"
 
 
+class OtelTimestampUnit(str, Enum):
+    """Timestamp unit interpretation hint for OpenTelemetry span timestamps."""
+
+    AUTO = "auto"
+    NS = "ns"
+    US = "us"
+    MS = "ms"
+    S = "s"
+
+
 def _ensure_json_serializable(value: _T, *, field_name: str) -> _T:
     try:
         json.dumps(value, allow_nan=False)
@@ -1166,6 +1176,42 @@ class AgentExtractorConfig(_StrictModel):
                 field_name=f"AgentExtractorConfig.{info.field_name}",
             )
         return value
+
+
+class OtelExtractorConfig(_StrictModel):
+    """Typed OpenTelemetry span attribute extraction and case-correlation rules."""
+
+    case_id_attribute: str | None = None
+    input_attribute: str | None = None
+    output_attribute: str | None = None
+    model_attribute: str | None = None
+    service_version_attribute: str | None = None
+    step_kind_attribute: str | None = None
+    tool_name_attribute: str | None = None
+    tool_arguments_attribute: str | None = None
+    tool_result_attribute: str | None = None
+    retrieval_documents_attribute: str | None = None
+    timestamp_unit: OtelTimestampUnit = OtelTimestampUnit.AUTO
+    match_dataset_by_input: bool = False
+
+    @field_validator(
+        "case_id_attribute",
+        "input_attribute",
+        "output_attribute",
+        "model_attribute",
+        "service_version_attribute",
+        "step_kind_attribute",
+        "tool_name_attribute",
+        "tool_arguments_attribute",
+        "tool_result_attribute",
+        "retrieval_documents_attribute",
+    )
+    @classmethod
+    def _validate_attr_names(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(
+            value,
+            field_name=f"OtelExtractorConfig.{info.field_name}",
+        )
 
 
 class DriftWarning(_StrictModel):
@@ -2595,6 +2641,7 @@ class CLIResolvedConfig(_StrictModel):
     dataset_id: str | None = None
     dataset_version: str | None = None
     executions_path: str | None = None
+    otel_traces: str | None = None
     run_id: str | None = None
     repeats: int = Field(default=1, ge=1, le=100)
     baseline: str | None = None
@@ -2602,6 +2649,7 @@ class CLIResolvedConfig(_StrictModel):
     trend_window: int | None = Field(default=None, ge=2)
     strict: bool = False
     target: ResolvedTargetConfig = Field(default_factory=ResolvedTargetConfig)
+    otel: OtelExtractorConfig = Field(default_factory=OtelExtractorConfig)
     metrics: list[MetricSpecConfig] = Field(default_factory=list)
     execution: OrchestratorConfig = Field(default_factory=OrchestratorConfig)
     judge: ResolvedJudgeSettings = Field(default_factory=ResolvedJudgeSettings)
@@ -2623,6 +2671,7 @@ class CLIResolvedConfig(_StrictModel):
         "dataset_id",
         "dataset_version",
         "executions_path",
+        "otel_traces",
         "run_id",
         "baseline",
     )

@@ -12,8 +12,9 @@ from pydantic import ValidationError
 from evalforge_maestro._canonical import redact_secrets, scrub_secret_text
 from evalforge_maestro.adapters._shared import redact_adapter_config
 from evalforge_maestro.adapters._trace_norm import redact_tool_call_record, redact_trace_step
+from evalforge_maestro.datasets import DatasetEngine
 from evalforge_maestro.exceptions import AdapterError, DatasetError
-from evalforge_maestro.types import EvaluationCase, ExecutionResult, RunRecord
+from evalforge_maestro.types import EvaluationCase, ExecutionResult, OtelExtractorConfig, RunRecord
 
 
 def _sanitize_replay_record(record: ExecutionResult) -> ExecutionResult:
@@ -83,6 +84,44 @@ class ReplayAdapter:
         else:
             fp, _ = redact_adapter_config({"replay_case_count": len(mapping)})
             self._config_fingerprint = fp
+
+    @classmethod
+    def from_otel_file(
+        cls,
+        path: Path | str,
+        *,
+        extractors: OtelExtractorConfig | None = None,
+        dataset: DatasetEngine | Sequence[EvaluationCase] | None = None,
+        case_id_map: Mapping[str, str] | None = None,
+        system_version: str | None = None,
+        model_id: str | None = None,
+        config_fingerprint: str | None = None,
+    ) -> ReplayAdapter:
+        """Build a ReplayAdapter directly from OTLP JSON, flat array JSON, or JSONL traces."""
+        from evalforge_maestro.adapters.otel import load_otel_executions
+
+        try:
+            executions = load_otel_executions(
+                path,
+                extractors=extractors,
+                dataset=dataset,
+                case_id_map=case_id_map,
+                system_version=system_version,
+                model_id=model_id,
+            )
+        except AdapterError as exc:
+            raise DatasetError(f"Failed loading OTel replay file {path}: {exc}") from exc
+
+        resolved_fp = config_fingerprint
+        if resolved_fp is None and extractors is not None:
+            resolved_fp, _ = redact_adapter_config(extractors.model_dump(mode="json"))
+
+        return cls(
+            executions,
+            system_version=system_version,
+            model_id=model_id,
+            config_fingerprint=resolved_fp,
+        )
 
     @classmethod
     def from_file(

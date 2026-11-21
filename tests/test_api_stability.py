@@ -53,6 +53,7 @@ from evalforge_maestro.types import (
     JudgeConfig,
     JudgeResponse,
     MetricComparison,
+    OtelExtractorConfig,
     QualityGatePolicy,
     QualityGateResult,
     RAGExtractorConfig,
@@ -162,6 +163,8 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "NDCGAtKMetric",
         "NormalizedMatchMetric",
         "OrchestratorConfig",
+        "OtelExtractorConfig",
+        "OtelTimestampUnit",
         "PolicyComplianceMetric",
         "PrecisionAtKMetric",
         "QualityGate",
@@ -226,8 +229,10 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "failure_recovery",
         "groundedness",
         "hit_rate_at_k",
+        "ingest_otel_spans",
         "json_schema_validation",
         "load_docpipe_fixture",
+        "load_otel_executions",
         "mrr",
         "ndcg_at_k",
         "normalize_agent_trace",
@@ -275,6 +280,8 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "DocpipeAdapter",
         "RAGAdapter",
         "ReplayAdapter",
+        "ingest_otel_spans",
+        "load_otel_executions",
         "normalize_agent_trace",
         "normalize_tool_calls",
     }
@@ -782,6 +789,31 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         ("model_id", "KEYWORD_ONLY"),
         ("config_fingerprint", "KEYWORD_ONLY"),
     ]
+    assert _param_spec(adapters.ReplayAdapter.from_otel_file) == [
+        ("path", "POSITIONAL_OR_KEYWORD"),
+        ("extractors", "KEYWORD_ONLY"),
+        ("dataset", "KEYWORD_ONLY"),
+        ("case_id_map", "KEYWORD_ONLY"),
+        ("system_version", "KEYWORD_ONLY"),
+        ("model_id", "KEYWORD_ONLY"),
+        ("config_fingerprint", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(adapters.ingest_otel_spans) == [
+        ("payload", "POSITIONAL_OR_KEYWORD"),
+        ("extractors", "KEYWORD_ONLY"),
+        ("dataset", "KEYWORD_ONLY"),
+        ("case_id_map", "KEYWORD_ONLY"),
+        ("system_version", "KEYWORD_ONLY"),
+        ("model_id", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(adapters.load_otel_executions) == [
+        ("path", "POSITIONAL_OR_KEYWORD"),
+        ("extractors", "KEYWORD_ONLY"),
+        ("dataset", "KEYWORD_ONLY"),
+        ("case_id_map", "KEYWORD_ONLY"),
+        ("system_version", "KEYWORD_ONLY"),
+        ("model_id", "KEYWORD_ONLY"),
+    ]
     assert _param_spec(reporting.detect_decoupled_evidence) == [
         ("run", "POSITIONAL_OR_KEYWORD"),
     ]
@@ -825,6 +857,8 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         "dataset_id",
         "dataset_version",
         "executions_path",
+        "otel_traces",
+        "otel",
         "run_id",
         "repeats",
         "baseline",
@@ -991,4 +1025,18 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         "trace",
         "tokens",
         "errors",
+    }
+    assert set(OtelExtractorConfig.model_fields) >= {
+        "case_id_attribute",
+        "input_attribute",
+        "output_attribute",
+        "model_attribute",
+        "service_version_attribute",
+        "step_kind_attribute",
+        "tool_name_attribute",
+        "tool_arguments_attribute",
+        "tool_result_attribute",
+        "retrieval_documents_attribute",
+        "timestamp_unit",
+        "match_dataset_by_input",
     }

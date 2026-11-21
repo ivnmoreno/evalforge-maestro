@@ -193,6 +193,8 @@ def _args_to_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
         "title",
         "resolved",
         "all_datasets",
+        "otel_path",
+        "otel_output",
     ):
         raw.pop(meta_key, None)
 
@@ -804,6 +806,61 @@ def _handle_config(
     return 0
 
 
+def _handle_ingest_otel(
+    args: argparse.Namespace,
+    resolved: CLIResolvedConfig,
+    logger: CLIStructuredLogger,
+) -> int:
+    from evalforge_maestro.adapters import load_otel_executions
+
+    dataset = (
+        DatasetEngine(
+            resolved.dataset,
+            dataset_id=resolved.dataset_id,
+            dataset_version=resolved.dataset_version,
+        )
+        if resolved.dataset
+        else None
+    )
+    try:
+        results = load_otel_executions(
+            str(args.otel_path),
+            extractors=resolved.otel,
+            dataset=dataset,
+            system_version=resolved.target.system_version,
+            model_id=resolved.target.model_id,
+        )
+    except AdapterError as exc:
+        raise DatasetError(scrub_secret_text(str(exc))) from exc
+
+    serialized_items = [redact_secrets(r.model_dump(mode="json")) for r in results]
+    output_arg = getattr(args, "otel_output", None)
+    if output_arg is not None:
+        out_path = Path(str(output_arg))
+        if out_path.suffix.lower() == ".json":
+            _write_text_file(str(out_path), json.dumps(serialized_items, indent=2) + "\n")
+        else:
+            jsonl_body = "\n".join(canonical_json_str(item) for item in serialized_items) + "\n"
+            _write_text_file(str(out_path), jsonl_body)
+        logger.info(f"Exported {len(serialized_items)} OTel execution(s) to {out_path}.")
+
+    wants_json = bool(getattr(args, "json", False))
+    quiet = bool(getattr(args, "quiet", False))
+    if wants_json:
+        sys.stdout.write(canonical_json_str(serialized_items) + "\n")
+        sys.stdout.flush()
+    elif not quiet:
+        case_list = ", ".join(r.case_id for r in results)
+        lines = [
+            f"Ingested {len(results)} OTel execution(s): {case_list}",
+        ]
+        if output_arg is not None:
+            lines.append(f"Wrote replay artifact: {output_arg}")
+        sys.stdout.write("\n".join(lines) + "\n")
+        sys.stdout.flush()
+    return 0
+
+
 def _map_exception_to_exit_code(exc: BaseException) -> tuple[int, str | None]:
     if isinstance(exc, LocalOnlyPolicyError):
         return 4, "Review --local-only / --block-pii settings and remove remote endpoints or PII."
@@ -855,6 +912,8 @@ def dispatch_command(args: argparse.Namespace) -> int:
             return _handle_report(args, resolved)
         if cmd == "config":
             return _handle_config(args, resolved, warnings)
+        if cmd == "ingest-otel":
+            return _handle_ingest_otel(args, resolved, logger)
         raise ConfigurationError(f"Unsupported CLI subcommand: {cmd!r}")
     except EvalforgeError as exc:
         code, hint = _map_exception_to_exit_code(exc)
