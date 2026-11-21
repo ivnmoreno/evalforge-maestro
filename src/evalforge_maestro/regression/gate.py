@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from evalforge_maestro._canonical import FLOAT_EPSILON, round_delta, round_score
 from evalforge_maestro.exceptions import ConfigurationError
 from evalforge_maestro.regression.anomaly import detect_anomalies
+from evalforge_maestro.regression.compare import build_pooled_cohort_run
 from evalforge_maestro.types import (
     AnomalyFlag,
     AnomalyType,
@@ -17,6 +20,7 @@ from evalforge_maestro.types import (
     QualityGateResult,
     RunComparisonReport,
     RunRecord,
+    SignificanceStatus,
     TrendReport,
 )
 
@@ -260,6 +264,33 @@ def _evaluate_comparison(
                 threshold=policy.max_regressed_cases,
             )
 
+    sig_regressions = [
+        (mc, mc.statistics)
+        for mc in sorted(comparison.metric_comparisons.values(), key=lambda item: item.metric_id)
+        if mc.statistics is not None
+        and mc.statistics.significance == SignificanceStatus.SIGNIFICANT_REGRESSION
+    ]
+    if sig_regressions:
+        sig_status = (
+            GateDecision.FAIL if policy.fail_on_significant_regression else GateDecision.WARNING
+        )
+        for mc, stats in sig_regressions:
+            recorder.add(
+                sig_status,
+                f"statistical_regression:{mc.metric_id}",
+                stats.explanation,
+                metric_id=mc.metric_id,
+                observed=stats.mean_delta,
+                threshold=0.0,
+            )
+    else:
+        recorder.add(
+            GateDecision.PASS,
+            "statistical_significance",
+            "No statistically significant regressions detected.",
+            observed=0,
+        )
+
     if comparison.added_case_ids or comparison.removed_case_ids:
         unmatched_count = len(comparison.added_case_ids) + len(comparison.removed_case_ids)
         added_cnt = len(comparison.added_case_ids)
@@ -414,6 +445,7 @@ class QualityGate:
             decision=decision,
             candidate_run_id=run.run_id,
             baseline_run_id=comparison.baseline_run_id if comparison is not None else None,
+            cohort=comparison.cohort if comparison is not None else None,
             passed=decision == GateDecision.PASS,
             blocking=decision == GateDecision.FAIL,
             inconclusive_rate=inconclusive_rate,
@@ -430,3 +462,23 @@ class QualityGate:
                 f"{len(recorder.warning_reasons)} warnings)."
             ),
         )
+
+    def evaluate_cohort(
+        self,
+        runs: Sequence[RunRecord],
+        *,
+        comparison: RunComparisonReport | None = None,
+        trend: TrendReport | None = None,
+    ) -> QualityGateResult:
+        """Evaluate gate acceptance over a repeated cohort of candidate runs."""
+        if (
+            comparison is not None
+            and comparison.cohort is not None
+            and comparison.cohort.candidate_run_ids != [r.run_id for r in runs]
+        ):
+            raise ConfigurationError(
+                f"Comparison cohort candidate_run_ids {comparison.cohort.candidate_run_ids!r} "
+                f"do not match evaluated cohort {[r.run_id for r in runs]!r}."
+            )
+        pooled = build_pooled_cohort_run(runs)
+        return self.evaluate(pooled, comparison=comparison, trend=trend)

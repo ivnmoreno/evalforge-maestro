@@ -6,8 +6,10 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -15,7 +17,7 @@ from evalforge_maestro._canonical import canonical_json_str, redact_secrets, scr
 from evalforge_maestro.cli.config import (
     format_resolved_config_text,
     parse_metric_spec_text,
-    resolve_cli_config,
+    resolve_cli_config_with_secrets,
 )
 from evalforge_maestro.cli.logging_utils import CLIStructuredLogger
 from evalforge_maestro.cli.targets import (
@@ -44,7 +46,13 @@ from evalforge_maestro.judges.security import (
     validate_local_only_target,
     validate_pii_egress,
 )
-from evalforge_maestro.regression import QualityGate, analyze_trend, compare_runs
+from evalforge_maestro.regression import (
+    QualityGate,
+    analyze_trend,
+    build_pooled_cohort_run,
+    compare_run_cohorts,
+    compare_runs,
+)
 from evalforge_maestro.reporting import (
     build_calibration_report,
     build_comparison_report,
@@ -139,6 +147,25 @@ def _resolve_baseline_run(store: LocalRunStore, ref: str) -> tuple[RunRecord, st
     return store.load_run(ref), None
 
 
+def _resolve_baseline_cohort(
+    store: LocalRunStore,
+    resolved: CLIResolvedConfig,
+) -> tuple[list[RunRecord], str | None]:
+    refs: list[str] = []
+    if resolved.baseline is not None:
+        refs.append(resolved.baseline)
+    refs.extend(resolved.baseline_runs)
+    runs: list[RunRecord] = []
+    aliases: list[str] = []
+    for ref in refs:
+        run_rec, alias = _resolve_baseline_run(store, ref)
+        runs.append(run_rec)
+        if alias is not None:
+            aliases.append(alias)
+    baseline_alias = aliases[0] if aliases else None
+    return runs, baseline_alias
+
+
 def _args_to_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
     raw = dict(vars(args))
     for meta_key in (
@@ -151,6 +178,7 @@ def _args_to_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
         "markdown_out",
         "output",
         "candidate_run_id",
+        "candidate_run_ids",
         "samples",
         "human_threshold",
         "score_divergence_threshold",
@@ -284,6 +312,8 @@ def _handle_run(
     resolved: CLIResolvedConfig,
     raw_api_key: str | None,
     logger: CLIStructuredLogger,
+    *,
+    raw_embedding_api_key: str | None = None,
 ) -> int:
     if not resolved.dataset:
         raise ConfigurationError(
@@ -295,72 +325,131 @@ def _handle_run(
         dataset_id=resolved.dataset_id,
         dataset_version=resolved.dataset_version,
     )
-    metrics = build_metrics_from_config(resolved, raw_api_key=raw_api_key)
+    initial_metrics = build_metrics_from_config(
+        resolved,
+        raw_api_key=raw_api_key,
+        raw_embedding_api_key=raw_embedding_api_key,
+    )
     adapter = build_target_adapter(resolved, dataset=dataset, logger=logger)
-    preflight_run_security(resolved=resolved, dataset=dataset, metrics=metrics)
+    preflight_run_security(resolved=resolved, dataset=dataset, metrics=initial_metrics)
 
     store = LocalRunStore(resolved.storage_dir)
-    baseline_run: RunRecord | None = None
-    baseline_alias: str | None = None
-    if resolved.baseline is not None:
-        baseline_run, baseline_alias = _resolve_baseline_run(store, resolved.baseline)
+    baseline_runs, baseline_alias = _resolve_baseline_cohort(store, resolved)
 
-    logger.info(f"Starting evaluation run over dataset {dataset.dataset_id!r}.")
-    orchestrator = EvaluationOrchestrator(
-        config=resolved.execution,
-        storage_root=resolved.storage_dir,
+    logger.info(
+        f"Starting evaluation run over dataset {dataset.dataset_id!r} (repeats={resolved.repeats})."
     )
-    run_record = orchestrator.run(dataset, adapter, metrics, run_id=resolved.run_id)
-
-    if run_record.evaluated_case_count == 0 or all(
-        bool(case_rec.execution.errors) for case_rec in run_record.case_results
-    ):
-        raise ExecutionError(
-            f"Zero evaluation cases completed without execution errors out of "
-            f"{run_record.evaluated_case_count} total case(s)."
+    base_cohort_id = (
+        resolved.run_id
+        or f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:6]}"
+    )
+    candidate_runs: list[RunRecord] = []
+    for idx in range(resolved.repeats):
+        if resolved.repeats == 1:
+            iter_run_id = resolved.run_id
+            iter_resolved = resolved
+            iter_metrics = initial_metrics
+        else:
+            iter_run_id = f"{base_cohort_id}-r{idx + 1:02d}"
+            iter_seed = (
+                (resolved.execution.seed + idx) if resolved.execution.seed is not None else None
+            )
+            iter_exec = resolved.execution.model_copy(update={"seed": iter_seed})
+            iter_judge = resolved.judge.model_copy(update={"seed": iter_seed})
+            iter_resolved = resolved.model_copy(
+                update={"execution": iter_exec, "judge": iter_judge}
+            )
+            iter_metrics = (
+                initial_metrics
+                if iter_seed == resolved.execution.seed
+                else build_metrics_from_config(
+                    iter_resolved,
+                    raw_api_key=raw_api_key,
+                    raw_embedding_api_key=raw_embedding_api_key,
+                )
+            )
+        orchestrator = EvaluationOrchestrator(
+            config=iter_resolved.execution,
+            storage_root=iter_resolved.storage_dir,
         )
+        run_record = orchestrator.run(dataset, adapter, iter_metrics, run_id=iter_run_id)
 
-    if run_record.case_results and all(
-        case_rec.metrics
-        and all(
-            m.status == MetricStatus.INCONCLUSIVE and "JudgeError:" in m.explanation
-            for m in case_rec.metrics.values()
-        )
-        for case_rec in run_record.case_results
-    ):
-        raise JudgeError(
-            "Zero evaluation cases completed judge scoring due to external judge runtime failures."
-        )
+        if run_record.evaluated_case_count == 0 or all(
+            bool(case_rec.execution.errors) for case_rec in run_record.case_results
+        ):
+            raise ExecutionError(
+                f"Zero evaluation cases completed without execution errors out of "
+                f"{run_record.evaluated_case_count} total case(s)."
+            )
 
+        if run_record.case_results and all(
+            case_rec.metrics
+            and all(
+                m.status == MetricStatus.INCONCLUSIVE and "JudgeError:" in m.explanation
+                for m in case_rec.metrics.values()
+            )
+            for case_rec in run_record.case_results
+        ):
+            raise JudgeError(
+                "Zero evaluation cases completed judge scoring due to external judge runtime "
+                "failures."
+            )
+        candidate_runs.append(run_record)
+
+    rep_run = candidate_runs[-1]
     comparison: RunComparisonReport | None = None
-    if baseline_run is not None:
-        comparison = compare_runs(
-            baseline_run,
-            run_record,
-            baseline_name=baseline_alias,
-            policy=resolved.gate,
-        )
+    if baseline_runs:
+        if len(baseline_runs) == 1 and len(candidate_runs) == 1:
+            comparison = compare_runs(
+                baseline_runs[0],
+                rep_run,
+                baseline_name=baseline_alias,
+                policy=resolved.gate,
+            )
+        else:
+            comparison = compare_run_cohorts(
+                baseline_runs,
+                candidate_runs,
+                baseline_name=baseline_alias,
+                policy=resolved.gate,
+            )
 
     trend: TrendReport | None = None
     if resolved.trend_window is not None:
         trend = analyze_trend(
             store.read_manifest(),
             window=resolved.trend_window,
-            dataset_id=run_record.dataset_id,
+            dataset_id=rep_run.dataset_id,
             slope_threshold=resolved.gate.trend_slope_threshold,
         )
 
-    gate_result = QualityGate(resolved.gate).evaluate(
-        run_record,
-        comparison=comparison,
-        trend=trend,
-    )
+    if len(candidate_runs) == 1:
+        gate_result = QualityGate(resolved.gate).evaluate(
+            rep_run,
+            comparison=comparison,
+            trend=trend,
+        )
+    else:
+        gate_result = QualityGate(resolved.gate).evaluate_cohort(
+            candidate_runs,
+            comparison=comparison,
+            trend=trend,
+        )
+
     doc = build_run_report(
-        run_record,
+        rep_run,
         comparison=comparison,
         trend=trend,
         gate=gate_result,
     )
+    if len(candidate_runs) >= 2:
+        pooled_run = build_pooled_cohort_run(candidate_runs)
+        doc = doc.model_copy(
+            update={
+                "cohort_run_ids": [r.run_id for r in candidate_runs],
+                "cohort_aggregates": pooled_run.aggregates,
+            }
+        )
     _emit_report(doc, args)
     return _gate_to_exit_code(gate_result, strict=resolved.strict)
 
@@ -370,28 +459,55 @@ def _handle_compare(
     resolved: CLIResolvedConfig,
     logger: CLIStructuredLogger,
 ) -> int:
-    baseline_ref = resolved.baseline
-    if not baseline_ref:
-        raise ConfigurationError(
-            "Comparison requires a baseline reference via --baseline, EVALFORGE_BASELINE, "
-            "or evalforge.toml."
-        )
     store = LocalRunStore(resolved.storage_dir)
-    candidate_run = store.load_run(str(args.candidate_run_id))
-    baseline_run, baseline_alias = _resolve_baseline_run(store, baseline_ref)
-    logger.info(f"Comparing run {candidate_run.run_id!r} against baseline {baseline_run.run_id!r}.")
-    comparison = compare_runs(
-        baseline_run,
-        candidate_run,
-        baseline_name=baseline_alias,
-        policy=resolved.gate,
+    baseline_runs, baseline_alias = _resolve_baseline_cohort(store, resolved)
+    if not baseline_runs:
+        raise ConfigurationError(
+            "Comparison requires a baseline reference via --baseline, --baseline-run, "
+            "EVALFORGE_BASELINE, or evalforge.toml."
+        )
+    cand_ids = [str(cid) for cid in getattr(args, "candidate_run_ids", [])]
+    if not cand_ids:
+        cand_ids = [str(args.candidate_run_id)]
+    candidate_runs = [store.load_run(cid) for cid in cand_ids]
+
+    logger.info(
+        f"Comparing run(s) {[r.run_id for r in candidate_runs]!r} against baseline(s) "
+        f"{[r.run_id for r in baseline_runs]!r}."
     )
-    gate_result = QualityGate(resolved.gate).evaluate(candidate_run, comparison=comparison)
+    if len(baseline_runs) == 1 and len(candidate_runs) == 1:
+        comparison = compare_runs(
+            baseline_runs[0],
+            candidate_runs[0],
+            baseline_name=baseline_alias,
+            policy=resolved.gate,
+        )
+        gate_result = QualityGate(resolved.gate).evaluate(candidate_runs[0], comparison=comparison)
+    else:
+        comparison = compare_run_cohorts(
+            baseline_runs,
+            candidate_runs,
+            baseline_name=baseline_alias,
+            policy=resolved.gate,
+        )
+        gate_result = QualityGate(resolved.gate).evaluate_cohort(
+            candidate_runs,
+            comparison=comparison,
+        )
+
     doc = build_comparison_report(
         comparison,
-        candidate_run=candidate_run,
+        candidate_run=candidate_runs[-1],
         gate=gate_result,
     )
+    if len(candidate_runs) >= 2:
+        pooled_cand = build_pooled_cohort_run(candidate_runs)
+        doc = doc.model_copy(
+            update={
+                "cohort_run_ids": [r.run_id for r in candidate_runs],
+                "cohort_aggregates": pooled_cand.aggregates,
+            }
+        )
     _emit_report(doc, args)
     return _gate_to_exit_code(gate_result, strict=resolved.strict)
 
@@ -711,14 +827,22 @@ def dispatch_command(args: argparse.Namespace) -> int:
     )
     try:
         cli_overrides = _args_to_cli_overrides(args)
-        resolved, raw_api_key, warnings = resolve_cli_config(cli_overrides=cli_overrides)
+        resolved, raw_api_key, raw_embedding_api_key, warnings = resolve_cli_config_with_secrets(
+            cli_overrides=cli_overrides
+        )
         logger.configure(level=resolved.logging.log_level, log_json=resolved.logging.log_json)
         for warning_msg in warnings:
             logger.warning(warning_msg)
 
         cmd = str(args.command)
         if cmd == "run":
-            return _handle_run(args, resolved, raw_api_key, logger)
+            return _handle_run(
+                args,
+                resolved,
+                raw_api_key,
+                logger,
+                raw_embedding_api_key=raw_embedding_api_key,
+            )
         if cmd == "compare":
             return _handle_compare(args, resolved, logger)
         if cmd == "trend":

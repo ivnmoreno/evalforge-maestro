@@ -49,6 +49,10 @@ Issues = "https://github.com/ivnmoreno/evalforge-maestro/issues"
 docpipe = [
     "docpipe-maestro>=0.4.1",
 ]
+embeddings = [
+    "litellm>=1.84.0",
+    "numpy>=1.26,<3",
+]
 judges = [
     "litellm>=1.84.0",
 ]

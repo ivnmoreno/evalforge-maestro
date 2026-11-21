@@ -13,9 +13,10 @@ from evalforge_maestro.cli.config import (
     parse_env_file,
     parse_metric_spec_text,
     resolve_cli_config,
+    resolve_cli_config_with_secrets,
 )
 from evalforge_maestro.exceptions import ConfigurationError
-from evalforge_maestro.types import ConfigSourceTier
+from evalforge_maestro.types import ConfigSourceTier, EmbeddingAggregation
 
 
 def test_five_tier_precedence_and_non_recursive_cwd(tmp_path: Path) -> None:
@@ -219,3 +220,101 @@ def test_agent_target_config_with_agent_extractors(tmp_path: Path) -> None:
         "tool_calls": "invocations",
         "trace": "steps",
     }
+
+
+def test_embedding_and_statistical_config_precedence_isolation_and_secret_masking(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "evalforge.toml").write_text(
+        "[run]\n"
+        "repeats = 2\n"
+        "[embedding]\n"
+        'model = "ollama/nomic-embed-text"\n'
+        'api_base = "http://localhost:11434"\n'
+        'api_key = "sk-embed-plaintext-toml"\n'
+        "pass_threshold = 0.65\n"
+        'aggregation = "mean"\n'
+        "max_retries = 3\n"
+        "retry_backoff_seconds = 0.25\n"
+        "timeout_seconds = 12.0\n"
+        "max_input_chars = 512\n"
+        "mock_mode = false\n"
+        "local_only = true\n"
+        "[gate]\n"
+        "confidence_level = 0.90\n"
+        "min_statistical_samples = 3\n"
+        "fail_on_significant_regression = false\n",
+        encoding="utf-8",
+    )
+
+    resolved, raw_judge, raw_embed, warnings = resolve_cli_config_with_secrets(
+        cli_overrides={
+            "repeats": 4,
+            "baseline_run": ["base-r2"],
+            "embedding_pass_threshold": 0.75,
+            "fail_on_significant_regression": True,
+        },
+        cwd=tmp_path,
+        environ={
+            "EVALFORGE_EMBEDDING_MODEL": "openai/text-embedding-3-small",
+            "EVALFORGE_EMBEDDING_MAX_INPUT_CHARS": "1024",
+            "EVALFORGE_CONFIDENCE_LEVEL": "0.99",
+            "EVALFORGE_JUDGE_MODEL": "openai/gpt-4o",
+            "EVALFORGE_JUDGE_API_BASE": "https://judge.example.com/v1",
+            "EVALFORGE_JUDGE_API_KEY": "sk-judge-isolated-999",
+        },
+    )
+    assert any("embedding.api_key" in w for w in warnings)
+    assert raw_judge == "sk-judge-isolated-999"
+    assert raw_embed == "sk-embed-plaintext-toml"
+    assert resolved.repeats == 4
+    assert resolved.baseline_runs == ["base-r2"]
+    assert resolved.embedding.model == "openai/text-embedding-3-small"
+    assert resolved.embedding.api_base == "http://localhost:11434"
+    assert resolved.embedding.api_key_configured is True
+    assert resolved.embedding.pass_threshold == 0.75
+    assert resolved.embedding.aggregation == EmbeddingAggregation.MEAN
+    assert resolved.embedding.max_retries == 3
+    assert resolved.embedding.timeout_seconds == 12.0
+    assert resolved.embedding.max_input_chars == 1024
+    assert resolved.embedding.local_only is True
+    assert resolved.gate.confidence_level == 0.99
+    assert resolved.gate.min_statistical_samples == 3
+    assert resolved.gate.fail_on_significant_regression is True
+
+    # Strict [embedding] / [judge] isolation when only judge settings are supplied (Q5)
+    iso_dir = tmp_path / "isolated"
+    iso_dir.mkdir()
+    iso_resolved, iso_judge, iso_embed, _ = resolve_cli_config_with_secrets(
+        cwd=iso_dir,
+        environ={
+            "EVALFORGE_JUDGE_MODEL": "openai/gpt-4o",
+            "EVALFORGE_JUDGE_API_BASE": "https://api.openai.com/v1",
+            "EVALFORGE_JUDGE_API_KEY": "sk-judge-only",
+        },
+    )
+    assert iso_judge == "sk-judge-only"
+    assert iso_resolved.judge.model == "openai/gpt-4o"
+    assert iso_resolved.embedding.model == "mock-embedding"
+    assert iso_resolved.embedding.api_base is None
+    assert iso_resolved.embedding.api_key_configured is False
+    assert iso_embed is None
+
+    rendered = format_resolved_config_text(resolved)
+    dumped = json.dumps(resolved.model_dump(mode="json"))
+    for secret in ("sk-embed-plaintext-toml", "sk-judge-isolated-999"):
+        assert secret not in rendered
+        assert secret not in dumped
+
+    # Validation failures on unknown key, invalid repeats, confidence_level, or aggregation
+    bad_emb = tmp_path / "bad_emb.toml"
+    bad_emb.write_text("[embedding]\nunknown_option = true\n", encoding="utf-8")
+    with pytest.raises(ConfigurationError):
+        resolve_cli_config(config_path=bad_emb, environ={})
+
+    with pytest.raises(ConfigurationError):
+        resolve_cli_config(cwd=iso_dir, cli_overrides={"repeats": 0}, environ={})
+    with pytest.raises(ConfigurationError):
+        resolve_cli_config(cwd=iso_dir, environ={"EVALFORGE_CONFIDENCE_LEVEL": "1.5"})
+    with pytest.raises(ConfigurationError):
+        resolve_cli_config(cwd=iso_dir, environ={"EVALFORGE_EMBEDDING_AGGREGATION": "median"})

@@ -286,6 +286,7 @@ class LocalRunStore:
             model_id=record.model_id,
             config_fingerprint=record.config_fingerprint,
             judge_config_fingerprint=record.judge_config_fingerprint,
+            embedding_config_fingerprint=record.embedding_config_fingerprint,
             metric_versions=dict(record.metric_versions),
             aggregate_scores={
                 metric_id: summary.mean_score for metric_id, summary in record.aggregates.items()

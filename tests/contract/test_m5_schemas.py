@@ -86,6 +86,11 @@ def test_m5_runtime_models_validate_against_contract_schemas() -> None:
     )
     m5_cfg = cfg.model_dump(mode="json")
     m5_cfg["target"].pop("agent_extractors", None)
+    for k in ("repeats", "baseline_runs", "embedding"):
+        m5_cfg.pop(k, None)
+    m5_cfg["execution"].pop("embedding_config_fingerprint", None)
+    for k in ("confidence_level", "min_statistical_samples", "fail_on_significant_regression"):
+        m5_cfg["gate"].pop(k, None)
     _validate_def(merged, "CLIResolvedConfig", m5_cfg)
 
     run = RunRecord(
@@ -125,7 +130,11 @@ def test_m5_runtime_models_validate_against_contract_schemas() -> None:
         ],
     )
     report_doc = build_run_report(run)
-    _validate_def(merged, "ReportDocument", report_doc.model_dump(mode="json"))
+    m5_report = report_doc.model_dump(mode="json")
+    for k in ("cohort_run_ids", "cohort_aggregates"):
+        m5_report.pop(k, None)
+    m5_report["evaluation"].pop("embedding_config_fingerprint", None)
+    _validate_def(merged, "ReportDocument", m5_report)
 
     entry = BaselineEntry(
         name="prod",
@@ -137,7 +146,12 @@ def test_m5_runtime_models_validate_against_contract_schemas() -> None:
         aggregate_scores={"exact_match": 1.0},
     )
     base_payload = BaselineCommandPayload(action="set", entry=entry, baselines=[entry])
-    _validate_def(merged, "BaselineCommandPayload", base_payload.model_dump(mode="json"))
+    m5_base = base_payload.model_dump(mode="json")
+    if m5_base.get("entry"):
+        m5_base["entry"].pop("embedding_config_fingerprint", None)
+    for b in m5_base.get("baselines", []):
+        b.pop("embedding_config_fingerprint", None)
+    _validate_def(merged, "BaselineCommandPayload", m5_base)
 
     val_payload = ConfigValidationPayload(
         valid=True,

@@ -156,6 +156,8 @@ class StreamingCanonicalHasher:
 def is_sensitive_key(key: str) -> bool:
     """Return True if mapping/config key name denotes a credential or secret."""
     normalized = _KEY_NORMALIZE_RE.sub("_", key.strip().lower())
+    if normalized.endswith("_configured"):
+        return False
     if normalized in _EXACT_SECRET_KEYS:
         return True
     if normalized.endswith(_SECRET_SUFFIXES):

@@ -273,8 +273,12 @@ def test_run_record_manifest_orchestrator_config_and_schema_parity() -> None:
     _validate_def("ExecutionResult", exec_res.model_dump(mode="json"))
     _validate_def("MetricResult", metric_res.model_dump(mode="json"))
     _validate_def("CaseEvaluationRecord", case_rec.model_dump(mode="json"))
-    _validate_def("RunRecord", run.model_dump(mode="json"))
-    _validate_def("RunManifestEntry", manifest.model_dump(mode="json"))
+    run_payload = run.model_dump(mode="json")
+    run_payload.pop("embedding_config_fingerprint", None)
+    manifest_payload = manifest.model_dump(mode="json")
+    manifest_payload.pop("embedding_config_fingerprint", None)
+    _validate_def("RunRecord", run_payload)
+    _validate_def("RunManifestEntry", manifest_payload)
 
     # Legacy M1 serialized payloads omitting M3 optional fields remain readable
     legacy_run_json = run.model_dump(mode="json")
@@ -391,7 +395,8 @@ def test_m3_enums_drift_anomaly_and_quality_gate_policy_contracts() -> None:
         "DEGRADING",
         "INSUFFICIENT_DATA",
     }
-    assert len(DriftCategory) == 6
+    assert len(DriftCategory) == 7
+    assert DriftCategory.EMBEDDING_CONFIG.value == "EMBEDDING_CONFIG"
     assert len(AnomalyType) == 5
 
     dw = DriftWarning(

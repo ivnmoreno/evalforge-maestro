@@ -40,9 +40,16 @@ _ANSWER_SURFACE_METRIC_IDS = frozenset(
         "json_schema_validation",
         "answer_correctness",
         "answer_relevance",
+        "embedding_similarity",
     }
 )
-_ANSWER_OR_GROUNDING_METRIC_IDS = _ANSWER_SURFACE_METRIC_IDS | frozenset({"groundedness"})
+_CONTEXT_ALIGNMENT_METRIC_IDS = frozenset(
+    {
+        "groundedness",
+        "context_embedding_similarity",
+    }
+)
+_ANSWER_OR_GROUNDING_METRIC_IDS = _ANSWER_SURFACE_METRIC_IDS | _CONTEXT_ALIGNMENT_METRIC_IDS
 _AGENT_TRACE_METRIC_IDS = frozenset(
     {
         "tool_selection",
@@ -96,7 +103,7 @@ def detect_decoupled_evidence(run: RunRecord) -> list[DecoupledEvidenceDiagnosti
         retrieval_or_grounding_fail = [
             m_id
             for m_id, res in case.metrics.items()
-            if (m_id in _RETRIEVAL_METRIC_IDS or m_id == "groundedness")
+            if (m_id in _RETRIEVAL_METRIC_IDS or m_id in _CONTEXT_ALIGNMENT_METRIC_IDS)
             and res.status == MetricStatus.FAIL
         ]
         answer_pass = [

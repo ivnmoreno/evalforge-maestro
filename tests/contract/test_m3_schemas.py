@@ -121,8 +121,13 @@ def test_m3_foundation_and_baseline_schemas_validate_cleanly() -> None:
         aggregate_scores={"exact_match": 1.0, "precision_at_k": None},
     )
     registry = BaselineRegistry(baselines={"default": entry})
-    _validate("BaselineEntry", entry.model_dump(mode="json"))
-    _validate("BaselineRegistry", registry.model_dump(mode="json"))
+    entry_m3 = entry.model_dump(mode="json")
+    entry_m3.pop("embedding_config_fingerprint", None)
+    _validate("BaselineEntry", entry_m3)
+    _validate(
+        "BaselineRegistry",
+        {"schema_version": registry.schema_version, "baselines": {"default": entry_m3}},
+    )
 
     drift = DriftWarning(
         category=DriftCategory.DATASET_FINGERPRINT,
@@ -142,14 +147,17 @@ def test_m3_foundation_and_baseline_schemas_validate_cleanly() -> None:
         explanation="Answer pass masked broken retrieval",
     )
     policy = QualityGatePolicy(min_metric_scores={"exact_match": 0.9})
+    policy_m3 = policy.model_dump(mode="json")
+    for k in ("confidence_level", "min_statistical_samples", "fail_on_significant_regression"):
+        policy_m3.pop(k, None)
     _validate("DriftWarning", drift.model_dump(mode="json"))
     _validate("AnomalyFlag", anomaly.model_dump(mode="json"))
-    _validate("QualityGatePolicy", policy.model_dump(mode="json"))
+    _validate("QualityGatePolicy", policy_m3)
 
     with pytest.raises(jsonschema.ValidationError):
         _validate(
             "BaselineEntry",
-            {**entry.model_dump(mode="json"), "name": "bad..name"},
+            {**entry_m3, "name": "bad..name"},
         )
 
 
@@ -159,11 +167,19 @@ def test_m3_comparison_trend_and_gate_runtime_outputs_match_json_schema() -> Non
     manifest_1 = RunManifestEntry.from_run_record(r1)
     manifest_2 = RunManifestEntry.from_run_record(r2)
 
-    _validate("RunRecord", r1.model_dump(mode="json"))
-    _validate("RunManifestEntry", manifest_1.model_dump(mode="json"))
+    r1_m3 = r1.model_dump(mode="json")
+    r1_m3.pop("embedding_config_fingerprint", None)
+    manifest_m3 = manifest_1.model_dump(mode="json")
+    manifest_m3.pop("embedding_config_fingerprint", None)
+    _validate("RunRecord", r1_m3)
+    _validate("RunManifestEntry", manifest_m3)
 
     comp = compare_runs(r1, r2, baseline_name="default")
     comp_json = comp.model_dump(mode="json")
+    comp_json.pop("cohort", None)
+    for mc_json in comp_json["metric_comparisons"].values():
+        mc_json.pop("statistics", None)
+        mc_json.pop("case_statistics", None)
     _validate("RunComparisonReport", comp_json)
     _validate("TargetChangeSummary", comp_json["target_changes"])
     _validate("MetricComparison", comp_json["metric_comparisons"]["exact_match"])
@@ -180,5 +196,6 @@ def test_m3_comparison_trend_and_gate_runtime_outputs_match_json_schema() -> Non
         r2, comparison=comp, trend=trend
     )
     gate_json = gate_res.model_dump(mode="json")
+    gate_json.pop("cohort", None)
     _validate("QualityGateResult", gate_json)
     _validate("GateRuleCheck", gate_json["checks"][0])
