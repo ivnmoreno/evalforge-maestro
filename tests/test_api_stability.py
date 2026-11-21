@@ -105,6 +105,8 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "CaseEvaluationRecord",
         "CaseMetadata",
         "CaseMetricDelta",
+        "CaseQueryFilter",
+        "CaseQueryPayload",
         "CaseSplit",
         "ComparisonDirection",
         "ConfigSettingProvenance",
@@ -143,6 +145,9 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "HitRateAtKMetric",
         "HumanCalibrationSample",
         "ImmutabilityError",
+        "IndexedCaseMetricRow",
+        "IndexedMetricPoint",
+        "IndexedRunSummary",
         "JsonSchemaValidationMetric",
         "JudgeConfig",
         "JudgeError",
@@ -186,7 +191,12 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "RunCohortSummary",
         "RunComparisonReport",
         "RunManifestEntry",
+        "RunQueryFilter",
+        "RunQueryPayload",
         "RunRecord",
+        "RunSortOrder",
+        "SQLiteIndexStatus",
+        "SQLiteRunIndex",
         "SignificanceStatus",
         "StatisticalMethod",
         "StatisticalSummary",
@@ -325,7 +335,7 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "tool_selection",
     }
     assert set(execution.__all__) == {"EvaluationOrchestrator"}
-    assert set(storage.__all__) == {"LocalRunStore"}
+    assert set(storage.__all__) == {"LocalRunStore", "SQLiteRunIndex"}
 
     subclasses = {
         ConfigurationError: EvalforgeError,
@@ -1040,3 +1050,31 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         "timestamp_unit",
         "match_dataset_by_input",
     }
+    assert _param_spec(storage.SQLiteRunIndex.__init__) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("store", "POSITIONAL_OR_KEYWORD"),
+        ("db_path", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(storage.SQLiteRunIndex.rebuild) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("force", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(storage.SQLiteRunIndex.query_runs) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("filters", "POSITIONAL_OR_KEYWORD"),
+        ("auto_sync", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(storage.SQLiteRunIndex.query_cases) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("filters", "POSITIONAL_OR_KEYWORD"),
+        ("auto_sync", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(storage.SQLiteRunIndex.metric_history) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("metric_id", "POSITIONAL_OR_KEYWORD"),
+        ("dataset_id", "KEYWORD_ONLY"),
+        ("model_id", "KEYWORD_ONLY"),
+        ("system_version", "KEYWORD_ONLY"),
+        ("limit", "KEYWORD_ONLY"),
+        ("auto_sync", "KEYWORD_ONLY"),
+    ]

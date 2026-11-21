@@ -687,6 +687,92 @@ def _add_ingest_otel_parser(subparsers: argparse._SubParsersAction[Any]) -> None
     _add_otel_extractor_flags(p)
 
 
+def _add_index_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
+    p = subparsers.add_parser(
+        "index",
+        help="Manage the rebuildable local SQLite query index (.evalforge/index.sqlite3).",
+    )
+    _add_global_flags(p)
+    sub = p.add_subparsers(dest="index_action", required=True, metavar="<action>")
+    for action, help_text in (
+        ("rebuild", "Atomically rebuild the SQLite index strictly from canonical JSON artifacts."),
+        ("sync", "Incrementally index newly committed canonical runs and baseline changes."),
+        ("status", "Inspect SQLite index health, schema version, and canonical sync parity."),
+    ):
+        sp = sub.add_parser(action, help=help_text)
+        _add_global_flags(sp)
+        sp.add_argument(
+            "--db-path",
+            default=None,
+            help="Optional custom SQLite index file path (default: <storage_dir>/index.sqlite3).",
+        )
+
+
+def _add_query_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
+    p = subparsers.add_parser(
+        "query",
+        help="Query indexed evaluation runs and per-case outcomes from local SQLite cache.",
+    )
+    _add_global_flags(p)
+    sub = p.add_subparsers(dest="query_target", required=True, metavar="<target>")
+
+    p_runs = sub.add_parser("runs", help="Query indexed RunRecord summaries with typed filters.")
+    _add_global_flags(p_runs)
+    p_runs.add_argument("--db-path", default=None, help="Optional custom SQLite index file path.")
+    p_runs.add_argument(
+        "--no-auto-sync",
+        action="store_true",
+        default=False,
+        help="Require an already built index and fail instead of syncing before querying.",
+    )
+    p_runs.add_argument("--dataset-id", dest="q_dataset_id", default=None)
+    p_runs.add_argument("--dataset-version", dest="q_dataset_version", default=None)
+    p_runs.add_argument("--run-id", dest="q_run_ids", action="append", default=None)
+    p_runs.add_argument("--model-id", dest="q_model_id", default=None)
+    p_runs.add_argument("--system-version", dest="q_system_version", default=None)
+    p_runs.add_argument("--baseline", dest="q_baseline", default=None)
+    p_runs.add_argument("--metric", dest="q_metric_id", default=None)
+    p_runs.add_argument("--min-score", dest="q_min_score", type=float, default=None)
+    p_runs.add_argument("--max-score", dest="q_max_score", type=float, default=None)
+    p_runs.add_argument("--mandatory-failures-only", action="store_true", default=False)
+    p_runs.add_argument("--since", default=None, help="Lower UTC ISO-8601 timestamp bound.")
+    p_runs.add_argument("--until", default=None, help="Upper UTC ISO-8601 timestamp bound.")
+    p_runs.add_argument(
+        "--order-by",
+        choices=["timestamp_desc", "timestamp_asc", "run_id_asc"],
+        default="timestamp_desc",
+    )
+    p_runs.add_argument("--limit", type=int, default=50)
+    p_runs.add_argument("--offset", type=int, default=0)
+
+    p_cases = sub.add_parser("cases", help="Query indexed per-case metric evaluations.")
+    _add_global_flags(p_cases)
+    p_cases.add_argument("--db-path", default=None, help="Optional custom SQLite index file path.")
+    p_cases.add_argument(
+        "--no-auto-sync",
+        action="store_true",
+        default=False,
+        help="Require an already built index and fail instead of syncing before querying.",
+    )
+    p_cases.add_argument("--run-id", dest="q_run_id", default=None)
+    p_cases.add_argument("--dataset-id", dest="q_dataset_id", default=None)
+    p_cases.add_argument("--case-id", dest="q_case_id", default=None)
+    p_cases.add_argument("--metric", dest="q_metric_id", default=None)
+    p_cases.add_argument(
+        "--status",
+        dest="q_status",
+        choices=["PASS", "FAIL", "WARNING", "INCONCLUSIVE", "NOT_APPLICABLE"],
+        default=None,
+    )
+    p_cases.add_argument("--mandatory-only", action="store_true", default=False)
+    p_cases.add_argument("--min-score", dest="q_min_score", type=float, default=None)
+    p_cases.add_argument("--max-score", dest="q_max_score", type=float, default=None)
+    p_cases.add_argument("--errors-only", action="store_true", default=False)
+    p_cases.add_argument("--anomalies-only", action="store_true", default=False)
+    p_cases.add_argument("--limit", type=int, default=100)
+    p_cases.add_argument("--offset", type=int, default=0)
+
+
 def build_parser() -> _StrictArgumentParser:
     """Build top-level CLI parser with zero heavy or config-file imports."""
     parser = _StrictArgumentParser(
@@ -710,6 +796,8 @@ def build_parser() -> _StrictArgumentParser:
     _add_report_parser(subparsers)
     _add_config_parser(subparsers)
     _add_ingest_otel_parser(subparsers)
+    _add_index_parser(subparsers)
+    _add_query_parser(subparsers)
     return parser
 
 

@@ -195,6 +195,31 @@ def _args_to_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
         "all_datasets",
         "otel_path",
         "otel_output",
+        "index_action",
+        "query_target",
+        "db_path",
+        "no_auto_sync",
+        "q_dataset_id",
+        "q_dataset_version",
+        "q_run_ids",
+        "q_run_id",
+        "q_case_id",
+        "q_model_id",
+        "q_system_version",
+        "q_baseline",
+        "q_metric_id",
+        "q_min_score",
+        "q_max_score",
+        "mandatory_failures_only",
+        "since",
+        "until",
+        "order_by",
+        "limit",
+        "offset",
+        "q_status",
+        "mandatory_only",
+        "errors_only",
+        "anomalies_only",
     ):
         raw.pop(meta_key, None)
 
@@ -861,6 +886,152 @@ def _handle_ingest_otel(
     return 0
 
 
+def _parse_iso_datetime(raw: Any, *, flag_name: str) -> datetime | None:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        raise ConfigurationError(f"{flag_name} must not be empty")
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ConfigurationError(f"Invalid ISO-8601 datetime for {flag_name}: {text!r}") from exc
+
+
+def _handle_index(args: argparse.Namespace, resolved: CLIResolvedConfig) -> int:
+    from evalforge_maestro.storage import SQLiteRunIndex
+
+    idx = SQLiteRunIndex(resolved.storage_dir, db_path=getattr(args, "db_path", None))
+    action = str(args.index_action)
+    if action == "rebuild":
+        st = idx.rebuild()
+    elif action == "sync":
+        st = idx.sync()
+    else:
+        st = idx.status()
+
+    wants_json = bool(getattr(args, "json", False))
+    quiet = bool(getattr(args, "quiet", False))
+    if wants_json:
+        _emit_json_model(st)
+    elif not quiet:
+        sys.stdout.write(
+            f"SQLite index ({st.db_path}): exists={st.exists} corrupt={st.corrupt} "
+            f"in_sync={st.in_sync} indexed={st.indexed_run_count}/{st.canonical_run_count} "
+            f"baselines={st.baseline_count}\n"
+        )
+        if st.stale_reason:
+            sys.stdout.write(f"Note: {st.stale_reason}\n")
+        sys.stdout.flush()
+    return 0
+
+
+def _handle_query(args: argparse.Namespace, resolved: CLIResolvedConfig) -> int:
+    from evalforge_maestro.storage import SQLiteRunIndex
+    from evalforge_maestro.types import (
+        CaseQueryFilter,
+        CaseQueryPayload,
+        RunQueryFilter,
+        RunQueryPayload,
+        RunSortOrder,
+    )
+
+    idx = SQLiteRunIndex(resolved.storage_dir, db_path=getattr(args, "db_path", None))
+    auto_sync = not bool(getattr(args, "no_auto_sync", False))
+    target = str(args.query_target)
+    wants_json = bool(getattr(args, "json", False))
+    quiet = bool(getattr(args, "quiet", False))
+
+    if target == "runs":
+        try:
+            rf = RunQueryFilter(
+                dataset_id=getattr(args, "q_dataset_id", None),
+                dataset_version=getattr(args, "q_dataset_version", None),
+                run_ids=getattr(args, "q_run_ids", None),
+                model_id=getattr(args, "q_model_id", None),
+                system_version=getattr(args, "q_system_version", None),
+                baseline_name=getattr(args, "q_baseline", None),
+                metric_id=getattr(args, "q_metric_id", None),
+                min_mean_score=getattr(args, "q_min_score", None),
+                max_mean_score=getattr(args, "q_max_score", None),
+                has_mandatory_failures=(
+                    True if getattr(args, "mandatory_failures_only", False) else None
+                ),
+                since=_parse_iso_datetime(getattr(args, "since", None), flag_name="--since"),
+                until=_parse_iso_datetime(getattr(args, "until", None), flag_name="--until"),
+                order_by=RunSortOrder(str(getattr(args, "order_by", "timestamp_desc"))),
+                limit=int(getattr(args, "limit", 50)),
+                offset=int(getattr(args, "offset", 0)),
+            )
+        except (ValidationError, ValueError) as exc:
+            raise ConfigurationError(f"Invalid query runs filter: {exc}") from exc
+
+        runs = idx.query_runs(rf, auto_sync=auto_sync)
+        payload_runs = RunQueryPayload(
+            storage_dir=str(resolved.storage_dir),
+            total_returned=len(runs),
+            runs=runs,
+        )
+        if wants_json:
+            _emit_json_model(payload_runs)
+        elif not quiet:
+            lines = [
+                "| Run ID | Dataset | Model | Cases | Baselines |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+            for r in runs:
+                bases = ", ".join(r.baseline_names) or "-"
+                lines.append(
+                    f"| {r.run_id} | {r.dataset_id} | {r.model_id or '-'} "
+                    f"| {r.evaluated_case_count} | {bases} |"
+                )
+            sys.stdout.write("\n".join(lines) + "\n")
+            sys.stdout.flush()
+        return 0
+
+    raw_status = getattr(args, "q_status", None)
+    try:
+        cf = CaseQueryFilter(
+            run_id=getattr(args, "q_run_id", None),
+            dataset_id=getattr(args, "q_dataset_id", None),
+            case_id=getattr(args, "q_case_id", None),
+            metric_id=getattr(args, "q_metric_id", None),
+            status=MetricStatus(raw_status) if raw_status is not None else None,
+            mandatory_only=bool(getattr(args, "mandatory_only", False)),
+            min_score=getattr(args, "q_min_score", None),
+            max_score=getattr(args, "q_max_score", None),
+            has_errors=True if getattr(args, "errors_only", False) else None,
+            has_anomaly_flags=True if getattr(args, "anomalies_only", False) else None,
+            limit=int(getattr(args, "limit", 100)),
+            offset=int(getattr(args, "offset", 0)),
+        )
+    except (ValidationError, ValueError) as exc:
+        raise ConfigurationError(f"Invalid query cases filter: {exc}") from exc
+
+    cases = idx.query_cases(cf, auto_sync=auto_sync)
+    payload_cases = CaseQueryPayload(
+        storage_dir=str(resolved.storage_dir),
+        total_returned=len(cases),
+        cases=cases,
+    )
+    if wants_json:
+        _emit_json_model(payload_cases)
+    elif not quiet:
+        lines = [
+            "| Run ID | Case ID | Metric | Status | Score | Mandatory |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for c in cases:
+            score_txt = f"{c.score:.6f}" if c.score is not None else "-"
+            lines.append(
+                f"| {c.run_id} | {c.case_id} | {c.metric_id} | {c.status.value} "
+                f"| {score_txt} | {c.mandatory} |"
+            )
+        sys.stdout.write("\n".join(lines) + "\n")
+        sys.stdout.flush()
+    return 0
+
+
 def _map_exception_to_exit_code(exc: BaseException) -> tuple[int, str | None]:
     if isinstance(exc, LocalOnlyPolicyError):
         return 4, "Review --local-only / --block-pii settings and remove remote endpoints or PII."
@@ -914,6 +1085,10 @@ def dispatch_command(args: argparse.Namespace) -> int:
             return _handle_config(args, resolved, warnings)
         if cmd == "ingest-otel":
             return _handle_ingest_otel(args, resolved, logger)
+        if cmd == "index":
+            return _handle_index(args, resolved)
+        if cmd == "query":
+            return _handle_query(args, resolved)
         raise ConfigurationError(f"Unsupported CLI subcommand: {cmd!r}")
     except EvalforgeError as exc:
         code, hint = _map_exception_to_exit_code(exc)
