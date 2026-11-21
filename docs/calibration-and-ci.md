@@ -88,11 +88,13 @@ evalforge-maestro run \
 
 When generation is stochastic (`docpipe_mode = "answer_detailed"`), add `--repeats 3 --seed 10 --fail-on-significant-regression` so regressions fail only when statistically significant under Student's / Welch's $t$-tests rather than random single-run jitter.
 
+> **Environment Credentials Note**: `evalforge-maestro --env-file` loads only `EVALFORGE_*` settings into CLI config; when invoking live remote `docpipe-maestro` generation models (such as `together_ai/zai-org/GLM-5.3-Flash`), export the provider key (e.g., `TOGETHERAI_API_KEY`) directly in the shell or CI environment alongside `EVALFORGE_JUDGE_API_KEY`.
+
 ---
 
 ## Part 2: Calibrating Small & Local Judges (`calibrate --min-agreement`)
 
-Small local models (`ollama_chat/llama3.2`, `qwen2.5:7b-instruct`, etc.) run zero-cost inside private CI runners (`--local-only` allows loopback `http://localhost:11434`), but uncalibrated small judges frequently drift toward excessive leniency (`TOO_GENEROUS`) or harshness (`TOO_STRICT`). Never promote an uncalibrated judge directly into a blocking PR gate.
+Small local models (`ollama_chat/llama3.2`, `qwen2.5:1.5b-instruct`, etc.) run zero-cost inside private CI runners (`--local-only` allows loopback `http://127.0.0.1:11434`), but uncalibrated small judges frequently drift toward excessive leniency (`too_generous`) or harshness (`too_harsh`). Never promote an uncalibrated judge directly into a blocking PR gate.
 
 ### 2.1 Preparing Human Calibration Samples (`HumanCalibrationSample`)
 
@@ -143,10 +145,10 @@ evalforge-maestro calibrate \
 | Metric / Field (`CalibrationReport`) | Meaning & Actionable Decision |
 | --- | --- |
 | `exact_agreement_rate` (`0.0..100.0%`) | Percentage of valid pairs where human verdict and judge pass/fail match. Fails with exit code `1` when below `--min-agreement` (in `[0..100]` scale, e.g. `80.0` for `80%`). |
-| `cohens_kappa` (`-1.0..1.0`) | Chance-corrected agreement accounting for skewed pass/fail label distributions. Investigate if `< 0.6` even when raw accuracy looks high on imbalanced datasets. |
-| `bias_summary.direction` | `TOO_GENEROUS` (false passes exceed false fails), `TOO_STRICT` (false fails exceed false passes), or `BALANCED`. |
-| `recommended_threshold` | Optimal cut-off found by deterministic threshold sweep (`threshold_sweep`) maximizing agreement + breaking ties closer to the configured threshold. Copy this value into `[judge].pass_threshold` or `--judge-pass-threshold` if needed. |
-| `disagreements` (`FALSE_POSITIVE`, `FALSE_NEGATIVE`, `SCORE_DIVERGENCE`, `INCONCLUSIVE`) | Case-by-case diff showing `human_score`, `judge_score`, verdict divergence, and human notes so prompt rubrics or `custom_rubric` criteria can be tightened immediately. |
+| `too_generous_rate` / `too_harsh_rate` (`0.0..1.0`) | Directional bias rates: fraction of human-failing cases wrongly passed by the judge (`too_generous_rate`) vs. human-passing cases wrongly failed (`too_harsh_rate`). |
+| `mean_human_score`, `mean_judge_score`, `mean_score_delta` | Mean score averages and signed delta (`mean_judge_score - mean_human_score` in `-1.0..1.0`) surfacing systemic calibration shift. |
+| `recommended_pass_threshold` (`0.0..1.0`) | Deterministic candidate threshold optimizing exact verdict agreement across evaluated scores (breaking ties closest to `pass_threshold_evaluated`). Copy into `[judge].pass_threshold` or `--judge-pass-threshold` if needed. |
+| `disagreements` (`too_generous`, `too_harsh`, `score_divergence`, `inconclusive`) | Per-case `CalibrationDisagreement` list recording `human_score`, `judge_score`, `score_delta`, `judge_rationale`, and `human_notes` for rubric tuning. |
 
 ### 2.4 Python SDK Calibration Loop
 
