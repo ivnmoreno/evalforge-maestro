@@ -49,7 +49,7 @@ uv sync --extra dev
 
 ## CLI Quickstart Reference
 
-Both `evalforge-maestro` and `evalforge_maestro` console commands expose eight subcommands: `run`, `ingest-otel`, `compare`, `trend`, `calibrate`, `baseline`, `report`, and `config`.
+Both `evalforge-maestro` and `evalforge_maestro` console commands expose ten subcommands: `run`, `ingest-otel`, `index`, `query`, `compare`, `trend`, `calibrate`, `baseline`, `report`, and `config`.
 
 ### 1. Offline CI / Local Regression Evaluation
 
@@ -142,6 +142,22 @@ evalforge-maestro report --run <RUN_ID> --baseline release-v1 > diagnostic-repor
 evalforge-maestro config validate --config evalforge.toml --json
 evalforge-maestro config show --resolved
 ```
+
+### 6. Local SQLite Query Index (`index` & `query`)
+
+Build or sync an optional derived SQLite query index (`.evalforge/index.sqlite3`) from canonical JSON artifacts and query runs or failing cases cleanly—deleting or corrupting the DB never loses data and rebuilds atomically:
+
+```bash
+# Inspect sync parity or atomically rebuild from .evalforge/runs/*.json + manifest.jsonl
+evalforge-maestro index status --storage-dir .evalforge --json
+evalforge-maestro index rebuild --storage-dir .evalforge --json
+
+# Query historical runs and triage mandatory/failing cases
+evalforge-maestro query runs --storage-dir .evalforge --dataset-id support-qa --metric exact_match --min-score 0.8 --json
+evalforge-maestro query cases --storage-dir .evalforge --status FAIL --mandatory-only --json
+```
+
+See the **[Rebuildable SQLite Query Index Guide](docs/sqlite-index.md)** for full recovery guarantees, normalized DDL tables, and filter references.
 
 ---
 
@@ -245,11 +261,24 @@ run = EvaluationOrchestrator().run(
 print(run.aggregates["tool_selection"].mean_score)
 ```
 
+### Rebuildable SQLite Run & Case Querying
+
+```python
+from evalforge_maestro import CaseQueryFilter, MetricStatus, RunQueryFilter, SQLiteRunIndex
+
+index = SQLiteRunIndex(".evalforge")
+runs = index.query_runs(
+    RunQueryFilter(dataset_id="support-qa", metric_id="exact_match", min_mean_score=0.8)
+)
+failed = index.query_cases(CaseQueryFilter(status=MetricStatus.FAIL, mandatory_only=True))
+```
+
 ---
 
 ## Documentation & CI Templates
 
 - **[OpenTelemetry Trace Ingestion Guide](docs/otel-ingestion.md)**: Complete specification of supported OTel formats, GenAI/OpenInference/Traceloop attribute mapping, span ordering, tool deduplication, token anti-double-counting, clock-skew handling, case correlation, and CLI/SDK examples.
+- **[Rebuildable SQLite Query Index Guide](docs/sqlite-index.md)**: Canonical-JSON single-source-of-truth guarantees, atomic rebuild/sync mechanics, corruption recovery, SQLite DDL schema, CLI `index`/`query` flags, and Python SDK workflows.
 - **[Consumer CI Templates (`examples/ci/README.md`)](examples/ci/README.md)**: Copy-ready GitHub Actions workflow [`evalforge-ci.yml`](examples/ci/evalforge-ci.yml), offline replay config [`evalforge.toml`](examples/ci/evalforge.toml), live `docpipe-maestro` config [`evalforge-docpipe.toml`](examples/ci/evalforge-docpipe.toml), OTel trace replay config [`evalforge-otel.toml`](examples/ci/evalforge-otel.toml), and sample fixtures.
 - **[Product Intent & Boundaries (`docs/intent.md`)](docs/intent.md)**: Domain scope, architectural invariants, security guarantees, and non-goals.
 - **[Post-MVP Roadmap (`docs/future-features.md`)](docs/future-features.md)**: Shipped extensions vs. upcoming milestones.
@@ -266,6 +295,7 @@ print(run.aggregates["tool_selection"].mean_score)
 - **M6 — Agent Trace Evaluation (`006-agent-trace-evaluation`)**: Backward-compatible typed trace/tool contracts (`ExpectedToolCall`, `ToolCallRecord`, `AgentTraceStep`), six `100%`-branch-covered deterministic agent metrics (`tool_selection`, `argument_correctness`, `execution_sequence`, `tool_efficiency`, `policy_compliance`, `failure_recovery`), dependency-free `AgentAdapter` + structural OpenAI/Anthropic trace normalizers, CLI `--target-type agent` support, field-level post-scoring `max_context_chars` trace truncation, and decoupled trace-vs-answer diagnostics.
 - **Statistical & Embedding Metrics (`007-statistical-embedding-metrics`)**: Lazy `[embeddings]` extra (`numpy` + `litellm`) powering `EmbeddingSimilarityMetric` and `ContextEmbeddingSimilarityMetric` with strict `[judge]`/`[embedding]` isolation, SHA-256 `--mock` fallback, pre-network `--local-only` / `--block-pii` checks, pure-stdlib Student's $t$ / Welch's $t$ / one-sample $t$ confidence intervals and $p$-values (`compare_runs`, `compare_run_cohorts`, `build_pooled_cohort_run`), `--repeats` immutable cohorts, and `QualityGate.evaluate_cohort` (`fail_on_significant_regression`).
 - **OpenTelemetry Execution Trace Ingestion (`008-otel-trace-ingestion`)**: Dependency-free ingestion (`ingest_otel_spans`, `load_otel_executions`, `ReplayAdapter.from_otel_file`, `OtelExtractorConfig`, `OtelTimestampUnit`) normalizing OTLP JSON, flat span arrays, JSONL spans, and duck-typed SDK `ReadableSpan` objects across GenAI/OpenInference/Traceloop conventions into secret-scrubbed canonical `ExecutionResult` traces, plus `[otel]` / `[run].otel_traces` config precedence, `evalforge-maestro run --otel-traces`, and `evalforge-maestro ingest-otel`.
+- **Rebuildable Local SQLite Query Index (`009-sqlite-query-index`)**: Zero-dependency `SQLiteRunIndex` (`evalforge_maestro.storage`) backed atomically by canonical `.evalforge/runs/*.json`, `manifest.jsonl`, and `baselines.json` with `0o700`/`0o600` permissions, `PRAGMA journal_mode=DELETE`, transparent deletion/corruption recovery, parameterized `query_runs` / `query_cases` / `metric_history`, and CLI `evalforge-maestro index` & `query` subcommands.
 
 ---
 

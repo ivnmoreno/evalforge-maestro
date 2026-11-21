@@ -214,6 +214,14 @@ class OtelTimestampUnit(str, Enum):
     S = "s"
 
 
+class RunSortOrder(str, Enum):
+    """Ordering modes supported by SQLiteRunIndex.query_runs."""
+
+    TIMESTAMP_DESC = "timestamp_desc"
+    TIMESTAMP_ASC = "timestamp_asc"
+    RUN_ID_ASC = "run_id_asc"
+
+
 def _ensure_json_serializable(value: _T, *, field_name: str) -> _T:
     try:
         json.dumps(value, allow_nan=False)
@@ -2894,3 +2902,278 @@ class CLIErrorPayload(_StrictModel):
     def _validate_hint(cls, value: str | None) -> str | None:
         cleaned = _validate_optional_str(value, field_name="CLIErrorPayload.hint")
         return scrub_secret_text(cleaned) if cleaned is not None else None
+
+
+class RunQueryFilter(_StrictModel):
+    """Typed filter contract for querying indexed runs in SQLiteRunIndex."""
+
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+    run_ids: list[str] | None = None
+    model_id: str | None = None
+    system_version: str | None = None
+    baseline_name: str | None = None
+    metric_id: str | None = None
+    min_mean_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_mean_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    has_mandatory_failures: bool | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    order_by: RunSortOrder = RunSortOrder.TIMESTAMP_DESC
+    limit: int = Field(default=50, ge=1, le=1000)
+    offset: int = Field(default=0, ge=0)
+
+    @field_validator(
+        "dataset_id",
+        "dataset_version",
+        "model_id",
+        "system_version",
+        "baseline_name",
+        "metric_id",
+    )
+    @classmethod
+    def _validate_opt_strs(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"RunQueryFilter.{info.field_name}")
+
+    @field_validator("run_ids")
+    @classmethod
+    def _validate_run_ids(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return [_ensure_non_empty_str(item, field_name="RunQueryFilter.run_ids") for item in value]
+
+    @field_validator("min_mean_score", "max_mean_score", mode="before")
+    @classmethod
+    def _validate_score_bounds(cls, value: Any, info: ValidationInfo) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name=f"RunQueryFilter.{info.field_name}")
+        return float(value)
+
+    @field_validator("limit", "offset", mode="before")
+    @classmethod
+    def _validate_pagination(cls, value: Any, info: ValidationInfo) -> int:
+        return _reject_strict_int(value, field_name=f"RunQueryFilter.{info.field_name}")
+
+    @field_validator("since", "until")
+    @classmethod
+    def _normalize_dates(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @model_validator(mode="after")
+    def _validate_cross_fields(self) -> RunQueryFilter:
+        if (
+            self.min_mean_score is not None or self.max_mean_score is not None
+        ) and self.metric_id is None:
+            raise ValueError(
+                "RunQueryFilter.metric_id is required when filtering by min_mean_score "
+                "or max_mean_score"
+            )
+        if (
+            self.min_mean_score is not None
+            and self.max_mean_score is not None
+            and self.min_mean_score > self.max_mean_score
+        ):
+            raise ValueError("RunQueryFilter.min_mean_score must not exceed max_mean_score")
+        if self.since is not None and self.until is not None and self.since > self.until:
+            raise ValueError("RunQueryFilter.since must not exceed until")
+        return self
+
+
+class CaseQueryFilter(_StrictModel):
+    """Typed filter contract for querying per-case metric rows in SQLiteRunIndex."""
+
+    run_id: str | None = None
+    dataset_id: str | None = None
+    case_id: str | None = None
+    metric_id: str | None = None
+    status: MetricStatus | None = None
+    mandatory_only: bool = False
+    min_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    has_errors: bool | None = None
+    has_anomaly_flags: bool | None = None
+    limit: int = Field(default=100, ge=1, le=5000)
+    offset: int = Field(default=0, ge=0)
+
+    @field_validator("run_id", "dataset_id", "case_id", "metric_id")
+    @classmethod
+    def _validate_opt_strs(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _validate_optional_str(value, field_name=f"CaseQueryFilter.{info.field_name}")
+
+    @field_validator("min_score", "max_score", mode="before")
+    @classmethod
+    def _validate_score_bounds(cls, value: Any, info: ValidationInfo) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name=f"CaseQueryFilter.{info.field_name}")
+        return float(value)
+
+    @field_validator("limit", "offset", mode="before")
+    @classmethod
+    def _validate_pagination(cls, value: Any, info: ValidationInfo) -> int:
+        return _reject_strict_int(value, field_name=f"CaseQueryFilter.{info.field_name}")
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> CaseQueryFilter:
+        if (
+            self.min_score is not None
+            and self.max_score is not None
+            and self.min_score > self.max_score
+        ):
+            raise ValueError("CaseQueryFilter.min_score must not exceed max_score")
+        return self
+
+
+class IndexedRunSummary(_StrictModel):
+    """Projected canonical run summary returned by SQLiteRunIndex.query_runs."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    run_id: str = Field(min_length=1)
+    timestamp: datetime
+    dataset_id: str = Field(min_length=1)
+    dataset_version: str | None = None
+    dataset_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    evaluated_case_count: int = Field(ge=1)
+    dataset_capped: bool = False
+    system_version: str | None = None
+    model_id: str | None = None
+    config_fingerprint: str | None = None
+    has_mandatory_failures: bool = False
+    mandatory_failed_case_ids: list[str] = Field(default_factory=list)
+    baseline_names: list[str] = Field(default_factory=list)
+    aggregate_scores: dict[str, float | None] = Field(default_factory=dict)
+    status_counts: dict[MetricStatus, int] = Field(default_factory=dict)
+
+    @field_validator("timestamp")
+    @classmethod
+    def _normalize_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @field_validator("aggregate_scores", mode="before")
+    @classmethod
+    def _round_scores(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        out: dict[str, float | None] = {}
+        for k, v in value.items():
+            if v is None:
+                out[str(k)] = None
+            else:
+                _reject_bool_number(v, field_name="IndexedRunSummary.aggregate_scores")
+                out[str(k)] = round_score(float(v))
+        return out
+
+
+class IndexedCaseMetricRow(_StrictModel):
+    """Projected per-case metric evaluation row returned by SQLiteRunIndex.query_cases."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    run_id: str = Field(min_length=1)
+    timestamp: datetime
+    dataset_id: str = Field(min_length=1)
+    model_id: str | None = None
+    system_version: str | None = None
+    case_id: str = Field(min_length=1)
+    metric_id: str = Field(min_length=1)
+    metric_version: str = Field(min_length=1)
+    status: MetricStatus
+    score: float | None = Field(default=None, ge=0.0, le=1.0)
+    mandatory: bool = False
+    elapsed_seconds: float = Field(ge=0.0)
+    has_errors: bool = False
+    anomaly_count: int = Field(default=0, ge=0)
+    explanation: str = ""
+
+    @field_validator("timestamp")
+    @classmethod
+    def _normalize_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def _round_score(cls, value: Any) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name="IndexedCaseMetricRow.score")
+        return round_score(float(value))
+
+    @field_validator("explanation")
+    @classmethod
+    def _scrub_explanation(cls, value: str) -> str:
+        return scrub_secret_text(value)
+
+
+class IndexedMetricPoint(_StrictModel):
+    """Chronological run-level metric summary returned by SQLiteRunIndex.metric_history."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    metric_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    timestamp: datetime
+    dataset_id: str = Field(min_length=1)
+    model_id: str | None = None
+    system_version: str | None = None
+    mean_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    applicable_count: int = Field(default=0, ge=0)
+    pass_count: int = Field(default=0, ge=0)
+    fail_count: int = Field(default=0, ge=0)
+
+    @field_validator("timestamp")
+    @classmethod
+    def _normalize_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @field_validator("mean_score", mode="before")
+    @classmethod
+    def _round_mean(cls, value: Any) -> float | None:
+        if value is None:
+            return None
+        _reject_bool_number(value, field_name="IndexedMetricPoint.mean_score")
+        return round_score(float(value))
+
+
+class SQLiteIndexStatus(_StrictModel):
+    """Diagnostic health and sync parity snapshot for SQLiteRunIndex."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    db_path: str = Field(min_length=1)
+    exists: bool
+    corrupt: bool = False
+    in_sync: bool
+    index_schema_version: str = "1"
+    db_size_bytes: int = Field(default=0, ge=0)
+    canonical_run_count: int = Field(default=0, ge=0)
+    indexed_run_count: int = Field(default=0, ge=0)
+    baseline_count: int = Field(default=0, ge=0)
+    pending_run_ids: list[str] = Field(default_factory=list)
+    extra_indexed_run_ids: list[str] = Field(default_factory=list)
+    stale_reason: str | None = None
+
+
+class RunQueryPayload(_StrictModel):
+    """Typed CLI --json payload emitted by `evalforge-maestro query runs`."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    storage_dir: str = Field(min_length=1)
+    total_returned: int = Field(ge=0)
+    runs: list[IndexedRunSummary] = Field(default_factory=list)
+
+
+class CaseQueryPayload(_StrictModel):
+    """Typed CLI --json payload emitted by `evalforge-maestro query cases`."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    storage_dir: str = Field(min_length=1)
+    total_returned: int = Field(ge=0)
+    cases: list[IndexedCaseMetricRow] = Field(default_factory=list)

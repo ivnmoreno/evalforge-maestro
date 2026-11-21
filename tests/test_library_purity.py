@@ -37,6 +37,7 @@ _HEAVY_OPTIONAL_MODULES = (
     "scipy",
     "opentelemetry",
     "opentelemetry_sdk",
+    "sqlite3",
     "jsonschema",
     "tomllib",
     "tomli",
