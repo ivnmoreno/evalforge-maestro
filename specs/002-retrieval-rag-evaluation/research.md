@@ -23,12 +23,12 @@
 - **Alternatives Considered**:
   - *Requiring users to subclass `TargetAdapter` for every RAG shape*: Rejected as unnecessarily verbose compared with declarative `RAGExtractorConfig`.
 
-## 4. Real `docpipe-maestro` API Alignment, Lazy `[docpipe]` Extra & Fixture Import
+## 4. Real `docpipe-maestro` API Alignment, Lazy `[docpipe-maestro]` Extra & Fixture Import
 
 - **Decision**: Align `DocpipeAdapter` (`src/evalforge_maestro/adapters/docpipe.py`) directly with `docpipe_maestro`'s real public API:
   - `mode="retrieve"` calls `retrieve(question, **retrieve_kwargs)` returning `list[docpipe_maestro.types.RetrievedChunk]` (`id`, `text`, `parent_id`, `metadata`, `score`), setting `ExecutionResult.output = None`.
   - `mode="answer_detailed"` retrieves sections via `retrieve(question, **retrieve_kwargs)`, constructs grounded messages via `build_chat_messages(question, sections)` (or `build_prompt` / direct query fallback on minimal injected clients), and calls `answer_detailed(prompt, has_context=bool(sections), **answer_kwargs)`, mapping `GenerationResult.text` -> `output`, token fields (`prompt_tokens`, `completion_tokens`, `reasoning_tokens`, `total_tokens`) -> `TokenUsage`, and finish/truncation metadata cleanly into `adapter_metadata` / `warnings`.
-  - Lazy-import `docpipe_maestro` inside `DocpipeAdapter.__init__` only when `client is None`, raising `MissingExtraError(extra="docpipe", package="docpipe-maestro")` when absent (`FR-003`, `FR-012`). Declare `docpipe = ["docpipe-maestro>=0.2"]` under `[project.optional-dependencies]` in `pyproject.toml`.
+  - Lazy-import `docpipe_maestro` inside `DocpipeAdapter.__init__` only when `client is None`, raising `MissingExtraError(extra="docpipe-maestro", package="docpipe-maestro")` when absent (`FR-003`, `FR-012`). Declare `docpipe-maestro = ["docpipe-maestro>=0.2"]` under `[project.optional-dependencies]` in `pyproject.toml`.
   - Implement dependency-free `load_docpipe_fixture` (`src/evalforge_maestro/datasets/docpipe_fixture.py`, also exposed via `DatasetEngine.from_docpipe_fixture(...)`) accepting real `docpipe_maestro` `EvalFixture` envelopes (`{"collection": ..., "profile": ..., "queries": [{"question": ..., "relevant_ids": [...], "notes": ...}]}`), JSON arrays, `cases`/`items` envelopes, and JSONL files without importing `docpipe_maestro`.
 - **Rationale**: Guarantees seamless interoperability with `docpipe-maestro` (`>=0.2`) while ensuring `import evalforge_maestro` and minimal `--no-dev` installs never load `docpipe_maestro`, `chromadb`, or `litellm` at cold start.
 - **Alternatives Considered**:

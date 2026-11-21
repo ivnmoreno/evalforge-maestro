@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "Start Milestone 2: Retrieval & RAG Evaluation (002-retrieval-rag-evaluation) per docs/intent.md Sections 5.2 (M2), 5.4, 6.1, 6.2, 6.3, 7.1, 8.2, and 8.3: protocol-based RAGAdapter with configurable dict/object field extractors, optional lazy-imported DocpipeAdapter behind the [docpipe] extra (wrapping retrieve() and answer_detailed(), plus docpipe fixture import), deterministic IR metrics (precision_at_k, recall_at_k, mrr, ndcg_at_k, hit_rate_at_k with binary and graded integer relevance and NOT_APPLICABLE safety when |G| == 0), and decoupled retrieval vs. answer evaluation."
+**Input**: User description: "Start Milestone 2: Retrieval & RAG Evaluation (002-retrieval-rag-evaluation) per docs/intent.md Sections 5.2 (M2), 5.4, 6.1, 6.2, 6.3, 7.1, 8.2, and 8.3: protocol-based RAGAdapter with configurable dict/object field extractors, optional lazy-imported DocpipeAdapter behind the [docpipe-maestro] extra (wrapping retrieve() and answer_detailed(), plus docpipe fixture import), deterministic IR metrics (precision_at_k, recall_at_k, mrr, ndcg_at_k, hit_rate_at_k with binary and graded integer relevance and NOT_APPLICABLE safety when |G| == 0), and decoupled retrieval vs. answer evaluation."
 
 ## Clarifications
 
@@ -71,7 +71,7 @@ An engineer runs a single `EvaluationOrchestrator` batch combining deterministic
 
 ### User Story 4 - Integrate Optional `docpipe-maestro` Pipelines and Evaluation Fixtures Safely (Priority: P4)
 
-An engineer using `docpipe-maestro` evaluates either retrieval-only pipelines (`retrieve()`) or full RAG pipelines (`answer_detailed()`) via an optional `DocpipeAdapter` and imports existing `docpipe-maestro` evaluation fixture files into `EvaluationCase` streams. Core installations without the `[docpipe]` extra incur zero cold-start import overhead and receive a clear `MissingExtraError` install hint only if `DocpipeAdapter` is instantiated without `docpipe_maestro` available.
+An engineer using `docpipe-maestro` evaluates either retrieval-only pipelines (`retrieve()`) or full RAG pipelines (`answer_detailed()`) via an optional `DocpipeAdapter` and imports existing `docpipe-maestro` evaluation fixture files into `EvaluationCase` streams. Core installations without the `[docpipe-maestro]` extra incur zero cold-start import overhead and receive a clear `MissingExtraError` install hint only if `DocpipeAdapter` is instantiated without `docpipe_maestro` available.
 
 **Why this priority**: Providing first-class integration with `docpipe-maestro` demonstrates clean separation between a RAG runtime and its independent verification engine while keeping core installs minimal and dependency-clean.
 
@@ -80,8 +80,8 @@ An engineer using `docpipe-maestro` evaluates either retrieval-only pipelines (`
 **Acceptance Scenarios**:
 
 1. **Given** a `docpipe-maestro` pipeline supporting `retrieve()` or `answer_detailed()`, **When** `DocpipeAdapter` executes an `EvaluationCase` in retrieval-only or full-RAG mode, **Then** retrieved documents normalize into `ExecutionResult.retrieved_chunks` (and generated answers/tokens populate `output`/`tokens` in `answer_detailed` mode while leaving `output = None` in `retrieve` mode so retrieval metrics score and answer metrics report `NOT_APPLICABLE` or appropriate status).
-2. **Given** an existing `docpipe-maestro` evaluation fixture file (JSONL, JSON array, or `{"cases": [...]}`/`{"items": [...]}` envelope) in an environment with or without `[docpipe]` installed, **When** loaded through the `docpipe` fixture importer into `DatasetEngine`, **Then** records convert cleanly into validated `EvaluationCase` streams with canonical SHA-256 dataset fingerprints without requiring `docpipe_maestro`.
-3. **Given** an environment where `docpipe_maestro` is not installed, **When** `evalforge_maestro` is imported or Milestone 001 / core IR workflows run, **Then** zero import errors occur and `docpipe_maestro` is never loaded; attempting to instantiate `DocpipeAdapter` raises `MissingExtraError` referencing the `[docpipe]` optional extra.
+2. **Given** an existing `docpipe-maestro` evaluation fixture file (JSONL, JSON array, or `{"cases": [...]}`/`{"items": [...]}` envelope) in an environment with or without `[docpipe-maestro]` installed, **When** loaded through the `docpipe` fixture importer into `DatasetEngine`, **Then** records convert cleanly into validated `EvaluationCase` streams with canonical SHA-256 dataset fingerprints without requiring `docpipe_maestro`.
+3. **Given** an environment where `docpipe_maestro` is not installed, **When** `evalforge_maestro` is imported or Milestone 001 / core IR workflows run, **Then** zero import errors occur and `docpipe_maestro` is never loaded; attempting to instantiate `DocpipeAdapter` raises `MissingExtraError` referencing the `[docpipe-maestro]` optional extra.
 
 ---
 
@@ -103,7 +103,7 @@ An engineer using `docpipe-maestro` evaluates either retrieval-only pipelines (`
   - Extended `EvaluationCase.expected_context` structured relevance contract (`ExpectedContextItem` alongside string ID compatibility) in the canonical schema module (`types.py`).
   - Five versioned deterministic IR metrics (`precision_at_k`, `recall_at_k`, `mrr`, `ndcg_at_k`, `hit_rate_at_k`) with formal metadata declarations, `K >= 1` validation, binary and graded integer relevance support, duplicate-chunk deduplication, and `NOT_APPLICABLE` / `INCONCLUSIVE` guards.
   - Protocol-based `RAGAdapter` supporting sync/async targets and configurable dict-key, attribute-path, or callable field extractors mapping outputs, `retrieved_chunks`, and `tokens` into `ExecutionResult`.
-  - Optional lazy-imported `DocpipeAdapter` (behind the `[docpipe]` optional extra) supporting `retrieve()` and `answer_detailed()` pipeline interfaces plus `docpipe-maestro` evaluation fixture conversion into `DatasetEngine`.
+  - Optional lazy-imported `DocpipeAdapter` (behind the `[docpipe-maestro]` optional extra) supporting `retrieve()` and `answer_detailed()` pipeline interfaces plus `docpipe-maestro` evaluation fixture conversion into `DatasetEngine`.
   - Decoupled multi-metric execution of retrieval and answer metrics from a single `ExecutionResult`, preserving mandatory-case failure visibility.
 - **Explicitly Out of Scope (Deferred to Milestones 003–005 / Excluded Permanently):**
   - Baseline pinning/comparison, sliding trend windows, cross-metric disagreement anomaly detection (`> 0.3` divergence engine), and `QualityGate` -> Milestone `003`.
@@ -117,7 +117,7 @@ An engineer using `docpipe-maestro` evaluates either retrieval-only pipelines (`
 
 - **FR-001**: System MUST extend the single canonical schema source (`types.py`) to support `expected_context` entries as either ground-truth chunk identifier strings or typed `ExpectedContextItem` contracts (`id`, optional `text`, optional non-negative integer `relevance` defaulting to `1`), rejecting blank IDs, negative relevance weights, or duplicate expected chunk IDs within a single case.
 - **FR-002**: System MUST maintain strict library purity across Milestone 002 modules: core and domain modules (`types`, `datasets`, `execution`, `metrics`, `storage`) MUST NEVER import concrete target adapters (`RAGAdapter`, `DocpipeAdapter`) or external RAG runtime packages (`docpipe_maestro`, `langchain`, `llama_index`), and `import evalforge_maestro` MUST keep `docpipe_maestro` unloaded on cold start.
-- **FR-003**: System MUST declare `[docpipe]` as an optional installation extra (`docpipe-maestro`) and raise an explicit `MissingExtraError` (including installation instructions for `[docpipe]`) when `DocpipeAdapter` is used without `docpipe_maestro` installed.
+- **FR-003**: System MUST declare `[docpipe-maestro]` as an optional installation extra (`docpipe-maestro`) and raise an explicit `MissingExtraError` (including installation instructions for `[docpipe-maestro]`) when `DocpipeAdapter` is used without `docpipe_maestro` installed.
 
 #### Deterministic IR Metrics
 
@@ -162,7 +162,7 @@ An engineer using `docpipe-maestro` evaluates either retrieval-only pipelines (`
 - **SC-002**: Repeated evaluations with duplicate chunk identifiers in retrieved results never inflate `Precision@K`, `Recall@K`, or `NDCG@K` past unique relevant chunk matches across 100% of cases.
 - **SC-003**: Heterogeneous synchronous and asynchronous RAG pipelines returning both mapping-based and attribute-based response objects execute cleanly through `RAGAdapter`, accurately normalizing `ExecutionResult.output`, ordered `retrieved_chunks`, and `tokens` across 100% of valid cases while isolating target/extraction failures cleanly into `ExecutionResult.errors`.
 - **SC-004**: Single-run multi-metric batches evaluating both retrieval and answer metrics correctly decouple evidence from final outputs across 100% of test cases (passing answer / failing retrieval when context is irrelevant; passing retrieval / failing answer when generation is wrong) while preserving mandatory case failure visibility.
-- **SC-005**: Importing `evalforge_maestro` or executing core/RAG workflows without `[docpipe]` installed succeeds with zero optional-dependency import errors and loads zero `docpipe_maestro` modules on cold start, while invoking `DocpipeAdapter` without `docpipe_maestro` raises an explicit `MissingExtraError` install hint 100% of the time.
+- **SC-005**: Importing `evalforge_maestro` or executing core/RAG workflows without `[docpipe-maestro]` installed succeeds with zero optional-dependency import errors and loads zero `docpipe_maestro` modules on cold start, while invoking `DocpipeAdapter` without `docpipe_maestro` raises an explicit `MissingExtraError` install hint 100% of the time.
 - **SC-006**: Existing `docpipe-maestro` evaluation fixtures convert into validated `EvaluationCase` streams with deterministic SHA-256 dataset fingerprints, and simulated `retrieve()` / `answer_detailed()` pipelines normalize completely into immutable `RunRecord` artifacts.
 
 ## Assumptions
@@ -171,4 +171,4 @@ An engineer using `docpipe-maestro` evaluates either retrieval-only pipelines (`
 - **Chunk Matching Basis**: By default (`match_parent_id = False`), all five IR metrics match and deduplicate on `RetrievedChunk.id` against ground-truth identifiers in `EvaluationCase.expected_context`; when `match_parent_id = True` is enabled on a metric, matching and deduplication use `chunk.parent_id or chunk.id`.
 - **Default `k` Value**: K-parameterized IR metrics (`Precision@K`, `Recall@K`, `Hit Rate@K`, `NDCG@K`) default `k` to a standard positive integer cutoff (e.g., `k = 5`) unless overridden by the caller at metric initialization, and record `k` in `MetricResult.config_snapshot`.
 - **Default Threshold for IR Metrics**: `hit_rate_at_k` defaults to `threshold = 1.0`, while `precision_at_k`, `recall_at_k`, `mrr`, and `ndcg_at_k` default to `threshold = 0.5`; all five honor overrides in order `CaseCriteria.metric_thresholds[metric_id]` > `CaseCriteria.pass_threshold` > metric `threshold`.
-- **Docpipe Optional Dependency Boundary**: `docpipe_maestro` is never required for core installation or CI runs without `[docpipe]`; `DocpipeAdapter` uses lazy imports and clean interface testing against simulated/protocol-compatible `docpipe_maestro` doubles when the external package is absent.
+- **Docpipe Optional Dependency Boundary**: `docpipe_maestro` is never required for core installation or CI runs without `[docpipe-maestro]`; `DocpipeAdapter` uses lazy imports and clean interface testing against simulated/protocol-compatible `docpipe_maestro` doubles when the external package is absent.

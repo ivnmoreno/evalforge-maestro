@@ -9,7 +9,7 @@ This guide defines end-to-end verification scenarios and gate commands for Miles
 
 - Python `3.10+` inside `.venv` (`uv sync --extra dev`)
 - Milestone 001 foundation tests passing (`evalforge_maestro`)
-- Note: core test suites run **without** `[docpipe]` installed so cold-start isolation and `MissingExtraError` behavior are verified directly
+- Note: core test suites run **without** `[docpipe-maestro]` installed so cold-start isolation and `MissingExtraError` behavior are verified directly
 
 ## Scenario 1: Deterministic IR Metrics (`precision_at_k`, `recall_at_k`, `mrr`, `ndcg_at_k`, `hit_rate_at_k`)
 
@@ -29,7 +29,7 @@ This guide defines end-to-end verification scenarios and gate commands for Miles
 
 ## Scenario 3: Optional `DocpipeAdapter`, Lazy Isolation & Fixture Importer
 
-1. Import `evalforge_maestro` and `evalforge_maestro.adapters` without `docpipe_maestro` installed; verify `docpipe_maestro` does not appear in `sys.modules` and calling `DocpipeAdapter()` without `client=` raises `MissingExtraError` pointing to `[docpipe]` (`FR-002`, `FR-003`, `SC-005`).
+1. Import `evalforge_maestro` and `evalforge_maestro.adapters` without `docpipe_maestro` installed; verify `docpipe_maestro` does not appear in `sys.modules` and calling `DocpipeAdapter()` without `client=` raises `MissingExtraError` pointing to `[docpipe-maestro]` (`FR-002`, `FR-003`, `SC-005`).
 2. Test `DocpipeAdapter(client=...)` in both `mode="retrieve"` and `mode="answer_detailed"` against simulated `docpipe_maestro` doubles matching `RetrievedChunk` and `GenerationResult` shapes (`FR-012`).
 3. Import sample `docpipe-maestro` `EvalFixture` JSON (`queries` envelope), JSON array, and JSONL files via `load_docpipe_fixture` / `DatasetEngine.from_docpipe_fixture` without `docpipe_maestro` installed (`FR-013`, `SC-006`).
 

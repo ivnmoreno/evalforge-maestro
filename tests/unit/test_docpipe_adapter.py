@@ -111,9 +111,9 @@ def test_docpipe_adapter_missing_extra_and_validation() -> None:
 
     with pytest.raises(MissingExtraError) as exc_info:
         DocpipeAdapter()
-    assert exc_info.value.extra == "docpipe"
+    assert exc_info.value.extra == "docpipe-maestro"
     assert exc_info.value.package == "docpipe-maestro"
-    assert "[docpipe]" in str(exc_info.value)
+    assert "[docpipe-maestro]" in str(exc_info.value)
 
     with pytest.raises(AdapterError):
         DocpipeAdapter(mode="invalid", client=_SimDocpipeClient())  # type: ignore[arg-type]

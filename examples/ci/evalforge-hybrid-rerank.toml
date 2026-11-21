@@ -1,0 +1,75 @@
+# Consumer CI template: hybrid+rerank RAG retrieval & grounded generation quality gate.
+# Evaluates pre-captured hybrid/reranked executions offline in CI; swap [target] to
+# `type = "docpipe"` with `docpipe_searcher = "fts5_hybrid"` and `docpipe_rerank = true`
+# (and `[judge]` pointing at a local Ollama/vLLM or remote judge) for live evaluation.
+
+[run]
+dataset = "examples/ci/hybrid-rerank-golden.jsonl"
+executions = "examples/ci/hybrid-rerank-executions.jsonl"
+dataset_id = "hybrid-rerank-ci"
+dataset_version = "1.0.0"
+max_concurrency = 4
+strict = true
+
+# To run live against docpipe-maestro>=0.4.1 instead of offline replay, replace
+# `executions` above with the live `[target]` section below:
+# [target]
+# type = "docpipe"
+# docpipe_mode = "answer_detailed"
+# docpipe_collection = "docs"
+# docpipe_persist_dir = "./.docpipe/chroma"
+# docpipe_top_k = 4
+# docpipe_searcher = "fts5_hybrid"
+# docpipe_rerank = true
+
+[metrics]
+enabled = [
+  "precision_at_k",
+  "recall_at_k",
+  "mrr",
+  "ndcg_at_k",
+  "groundedness",
+  "answer_relevance",
+  "context_relevance",
+]
+
+[metrics.precision_at_k]
+k = 2
+threshold = 0.75
+
+[metrics.recall_at_k]
+k = 3
+threshold = 0.8
+
+[metrics.mrr]
+threshold = 0.5
+
+[metrics.ndcg_at_k]
+k = 3
+threshold = 0.75
+
+[metrics.groundedness]
+threshold = 0.75
+
+[metrics.answer_relevance]
+threshold = 0.6
+
+[metrics.context_relevance]
+threshold = 0.6
+
+[judge]
+model = "mock-judge"
+mock_mode = true
+local_only = true
+pass_threshold = 0.6
+
+[security]
+local_only = true
+block_pii = false
+
+[gate]
+min_score = 0.75
+max_regression_drop = 0.05
+max_inconclusive_rate = 0.05
+fail_on_drift = false
+fail_on_anomaly = false

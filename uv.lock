@@ -1276,7 +1276,7 @@ dev = [
     { name = "twine" },
     { name = "types-jsonschema" },
 ]
-docpipe = [
+docpipe-maestro = [
     { name = "docpipe-maestro" },
 ]
 embeddings = [
@@ -1292,7 +1292,7 @@ judges = [
 [package.metadata]
 requires-dist = [
     { name = "commitizen", marker = "extra == 'dev'", specifier = ">=4.0" },
-    { name = "docpipe-maestro", marker = "extra == 'docpipe'", specifier = ">=0.4.1" },
+    { name = "docpipe-maestro", marker = "extra == 'docpipe-maestro'", specifier = ">=0.4.1" },
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "litellm", marker = "extra == 'embeddings'", specifier = ">=1.84.0" },
     { name = "litellm", marker = "extra == 'judges'", specifier = ">=1.84.0" },
@@ -1307,7 +1307,7 @@ requires-dist = [
     { name = "twine", marker = "extra == 'dev'", specifier = ">=5.1" },
     { name = "types-jsonschema", marker = "extra == 'dev'", specifier = ">=4.23" },
 ]
-provides-extras = ["dev", "docpipe", "embeddings", "judges"]
+provides-extras = ["dev", "docpipe-maestro", "embeddings", "judges"]
 
 [[package]]
 name = "exceptiongroup"

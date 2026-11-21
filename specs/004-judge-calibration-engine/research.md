@@ -138,4 +138,4 @@ Every technical design point for Milestone 4 was evaluated against the existing 
 - **Decision**:
   - Add `judges = ["litellm>=1.84.0"]` to `[project.optional-dependencies]` in `pyproject.toml`, update `uv.lock`, and keep default `dev` & minimal installs free of `litellm`.
   - Add CI smoke test in `.github/workflows/ci.yml` (`cross-os-and-packaging` minimal check asserting `"litellm" not in sys.modules` and `MissingExtraError` referencing `"judges"` when invoking a live non-mock judge; plus `optional-judges-compat` job syncing `--extra dev --extra judges` and confirming cold-start purity + `LITELLM_LOCAL_MODEL_COST_MAP=True` offline execution).
-- **Rationale**: Mirrors M2's proven `[docpipe]` pattern cleanly and upholds Constitution II & VII (`pip-audit`, clean `--no-dev`, cold-start `sys.modules` invariants).
+- **Rationale**: Mirrors M2's proven `[docpipe-maestro]` pattern cleanly and upholds Constitution II & VII (`pip-audit`, clean `--no-dev`, cold-start `sys.modules` invariants).

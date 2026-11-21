@@ -11,10 +11,95 @@ EvalForge Maestro provides deterministic evaluation metrics, retrieval/RAG diagn
 ## Key Architecture & Guarantees
 
 - **Strict Domain Isolation**: Zero coupling to document chunkers, runtime RAG stores, or agent orchestration loops. Target systems plug in via thin protocol adapters (`CallableAdapter`, `RAGAdapter`, lazy `DocpipeAdapter`, `AgentAdapter`) or completely offline (`ReplayAdapter`, `ingest_otel_spans`, `load_otel_executions`).
-- **Cold-Start Purity**: Importing `evalforge_maestro` or invoking `evalforge-maestro --help` never loads heavy optional runtimes (`litellm`, `docpipe_maestro`, `numpy`, `scipy`, `opentelemetry`, `opentelemetry_sdk`) unless explicitly requested.
+- **Cold-Start Purity**: Importing `evalforge_maestro` or invoking `evalforge-maestro --help` never loads heavy or runtime-specific modules (`litellm`, `docpipe_maestro`, `numpy`, `scipy`, `opentelemetry`, `opentelemetry_sdk`, `sqlite3`, `http.server`) unless explicitly requested.
 - **Deterministic & Immutable Artifacts**: Canonical JSON hashing (`SHA-256`) of datasets and redacted configurations paired with atomic `0o700`/`0o600` run records under `.evalforge/runs/` and append-only `manifest.jsonl`.
 - **Defence-in-Depth Security**: Pre-network `--local-only` endpoint validation (loopback-only enforcement and `LITELLM_LOCAL_MODEL_COST_MAP`), opt-in `--block-pii` egress scanning, prompt-injection XML/nonce delimiting in model-based judges, and automatic credential/API-key/Bearer/PII masking (`[REDACTED]`) across logs, traces, resolved configs, and reports.
 - **Separation of Concerns**: Every run and report strictly separates **Evaluation** (metric outcomes + retrieval-vs-answer/trace decoupling diagnostics), **Regression** (baseline cohort deltas, $p$-values, sliding OLS trends, anomaly flags, drift warnings), and **Acceptance / Quality Gate** (policy pass/fail verdict and POSIX exit code).
+
+---
+
+## How EvalForge Maestro Works (Visual Guide)
+
+EvalForge Maestro follows a strict, deterministic six-stage pipeline that separates **executing your AI system** from **scoring quality**, **checking regressions**, and **enforcing release gates**:
+
+```mermaid
+flowchart TD
+    S1["1. Define Golden Dataset (JSONL / JSON / Docpipe Fixture)"]
+    S2A["Live Target: CallableAdapter / RAGAdapter / DocpipeAdapter / AgentAdapter"]
+    S2B["Offline Replay: ReplayAdapter (Captured JSONL or OpenTelemetry Spans)"]
+    S3["3. Pre-Network Security Preflight (--local-only / --block-pii / Secret Scrubbing)"]
+    S4["4. Bounded EvaluationOrchestrator + 4 Metric Families"]
+    S5["5. Three-Way Engine: Evaluation | Regression (vs Baseline / Cohort) | QualityGate"]
+    S6["6. Immutable Artifacts (.evalforge/runs/*.json + manifest.jsonl)"]
+    S7["Optional Layers: SQLiteRunIndex (index/query) | HTTP Service (serve)"]
+
+    S1 --> S2A
+    S1 --> S2B
+    S2A --> S3
+    S2B --> S3
+    S3 --> S4
+    S4 --> S5
+    S5 --> S6
+    S6 --> S7
+```
+
+### Step-by-Step Pipeline Walkthrough
+
+| Step | What Happens & Why It Matters | Concrete Components & Commands |
+| --- | --- | --- |
+| **1. Define** | Stream versioned test cases (`EvaluationCase`: `input`, `reference`, `expected_context`, `expected_tool_calls`, `criteria.mandatory`) and lock a canonical SHA-256 `dataset_fingerprint` so baseline comparisons never silently drift when test cases change. | `DatasetEngine`, `load_docpipe_fixture`, `--dataset` |
+| **2. Adapt / Ingest** | Capture what your system actually produced (`ExecutionResult`: final `output`, `retrieved_chunks`, `tool_calls`, `trace`, tokens, latency). Run **live** against Python/RAG/Agent/Docpipe code or completely **offline** from pre-recorded executions or OTel spans. | `CallableAdapter`, `RAGAdapter`, `DocpipeAdapter`, `AgentAdapter`, `ReplayAdapter`, `ingest_otel_spans` |
+| **3. Security Preflight** | Before any non-mock network call is attempted, `--local-only` rejects non-loopback judge/embedding endpoints and `--block-pii` scans payloads for emails, tokens, and credentials (exiting cleanly with POSIX `4`). | `validate_local_only_target`, `validate_pii_egress`, `redact_secrets` |
+| **4. Orchestrate & Score** | `EvaluationOrchestrator` runs cases under bounded concurrency (`--max-concurrency`), checkpoints per-case progress atomically, truncates oversized persisted traces **after** scoring (`--max-context-chars`), and evaluates up to 4 metric families simultaneously. | Deterministic text/JSON, Retrieval IR (`100%` branch), Agent Trace (`100%` branch), LLM Judges & Dense Embeddings |
+| **5. Three-Way Evaluate & Gate** | **Never collapses metrics into a single opaque average.** Produces (a) raw **Evaluation** scores + decoupling diagnostics, (b) **Regression** deltas, Student's/Welch's $t$-test $p$-values (`--repeats`), OLS trend slopes, & anomaly flags (`>0.3` spread), and (c) deterministic **Quality Gate** verdicts (`PASS` / `FAIL` / `WARNING` / `INCONCLUSIVE`). | `compare_runs`, `compare_run_cohorts`, `analyze_trend`, `QualityGate`, `--strict` |
+| **6. Persist, Index & Serve** | Writes immutable `0o600` JSON `RunRecord` artifacts + append-only `manifest.jsonl` and pinned `baselines.json`. Optionally builds a rebuildable SQLite index (`SQLiteRunIndex`) for fast queries or exposes everything behind Bearer-authenticated HTTP (`ServiceApplication` / `serve`). | `LocalRunStore`, `SQLiteRunIndex`, `evalforge-maestro index` / `query` / `serve` |
+
+### Inside the Metric Families & Three-Way Diagnosis
+
+Rather than hiding failures behind a macro average, EvalForge Maestro isolates **where** a RAG or agent pipeline broke:
+
+```mermaid
+flowchart LR
+    EX["Captured ExecutionResult (output + retrieved_chunks + tool_calls/trace)"]
+
+    M1["Deterministic Text & Schema (exact_match, normalized_match, json_schema_validation)"]
+    M2["Retrieval IR Ranking (precision_at_k, recall_at_k, mrr, ndcg_at_k, hit_rate_at_k)"]
+    M3["Agent Tool & Trace (tool_selection, argument_correctness, execution_sequence, efficiency, policy, recovery)"]
+    M4["Semantic & Judge Scoring (--mock offline OR local/remote LiteLLM: groundedness, relevance, correctness, embeddings)"]
+
+    DEC{"Three-Way & Decoupling Diagnostics"}
+    G1["PASS / FAIL / WARNING / INCONCLUSIVE (POSIX Exit 0..4)"]
+
+    EX --> M1
+    EX --> M2
+    EX --> M3
+    EX --> M4
+    M1 --> DEC
+    M2 --> DEC
+    M3 --> DEC
+    M4 --> DEC
+    DEC -->|"Retrieval OK + Generation Failed -> Fix Prompt / LLM"| G1
+    DEC -->|"Retrieval Failed -> Fix Chunking / Hybrid / Reranker"| G1
+    DEC -->|"Trace Violation / Policy Breach -> Fix Agent Guardrails"| G1
+```
+
+> **Calibrating Small & Local Judges First**: Before letting a local model (such as Ollama/vLLM) gate pull requests, run `evalforge-maestro calibrate --samples ... --metric groundedness --min-agreement 80.0` to measure Cohen's $\kappa$, bias direction (`TOO_GENEROUS` vs. `TOO_STRICT`), and the optimal threshold sweep ([`docs/calibration-and-ci.md`](docs/calibration-and-ci.md)).
+
+### Minimal Core vs. Lazy Optional Extras
+
+Core installation keeps dependencies minimal and cold-start instant; optional runtimes are only imported when invoked:
+
+```mermaid
+flowchart LR
+    CORE["evalforge-maestro Core (pydantic + jsonschema only): CLI, Datasets, Deterministic/IR/Agent Metrics, Statistical t-tests, OTel Ingestion, SQLite Index, HTTP Service"]
+    E1["[docpipe-maestro]: DocpipeAdapter (FTS5 hybrid + cross-encoder rerank + answer_detailed)"]
+    E2["[judges]: LiteLLM Gateway (Groundedness, Answer/Context Relevance, Custom Rubric, Calibration)"]
+    E3["[embeddings]: numpy + LiteLLM (EmbeddingSimilarityMetric, ContextEmbeddingSimilarityMetric)"]
+
+    CORE -.->|"lazy import -> MissingExtraError if absent"| E1
+    CORE -.->|"lazy import -> MissingExtraError if absent"| E2
+    CORE -.->|"lazy import -> MissingExtraError if absent"| E3
+```
 
 ---
 
@@ -30,7 +115,7 @@ Optional capability extras (lazy-loaded on demand; never required at import time
 
 ```bash
 # Docpipe Maestro retrieval and RAG target adapter
-pip install "evalforge-maestro[docpipe]"
+pip install "evalforge-maestro[docpipe-maestro]"
 
 # LiteLLM-backed model-as-judge evaluation and calibration
 pip install "evalforge-maestro[judges]"
@@ -49,7 +134,7 @@ uv sync --extra dev
 
 ## CLI Quickstart Reference
 
-Both `evalforge-maestro` and `evalforge_maestro` console commands expose ten subcommands: `run`, `ingest-otel`, `index`, `query`, `compare`, `trend`, `calibrate`, `baseline`, `report`, and `config`.
+Both `evalforge-maestro` and `evalforge_maestro` console commands expose eleven subcommands: `run`, `ingest-otel`, `index`, `query`, `compare`, `trend`, `calibrate`, `baseline`, `report`, `config`, and `serve`.
 
 ### 1. Offline CI / Local Regression Evaluation
 
@@ -127,10 +212,11 @@ evalforge-maestro compare <CAND_R01> <CAND_R02> \
 # Inspect sliding-window OLS metric trend slopes
 evalforge-maestro trend --window 5 --json
 
-# Calibrate a judge metric against labeled human samples
+# Calibrate a judge metric against labeled human samples with minimum agreement gate
 evalforge-maestro calibrate \
-  --samples cal-samples.jsonl \
+  --samples examples/ci/calibration-samples.jsonl \
   --metric groundedness \
+  --min-agreement 80.0 \
   --mock \
   --local-only \
   --json
@@ -158,6 +244,26 @@ evalforge-maestro query cases --storage-dir .evalforge --status FAIL --mandatory
 ```
 
 See the **[Rebuildable SQLite Query Index Guide](docs/sqlite-index.md)** for full recovery guarantees, normalized DDL tables, and filter references.
+
+### 7. Optional Remote Evaluation HTTP Service (`serve`)
+
+Serve canonical storage queries, SQLite index lifecycle, OTel trace ingestion, offline/trace evaluation, comparison gates, and report rendering over a typed stdlib HTTP/1.1 JSON API (safe loopback default `127.0.0.1:8787`, `local_only=True`, pre-bind remote auth guard, and constant-time Bearer authentication):
+
+```bash
+# Local loopback server in offline mock mode (defaults to local_only=True)
+evalforge-maestro serve --storage-dir .evalforge --mock --log-level INFO
+
+# Non-loopback host requires --auth-token or EVALFORGE_SERVICE_TOKEN (else exits 4 pre-bind)
+EVALFORGE_SERVICE_TOKEN="strong-secret-token" evalforge-maestro serve \
+  --host 0.0.0.0 \
+  --port 8787 \
+  --storage-dir .evalforge \
+  --allow-remote-judges \
+  --block-pii \
+  --log-level INFO
+```
+
+See the **[Remote Evaluation Service Guide](docs/remote-service.md)** for security guarantees, complete route/schema tables, `curl` examples, and in-process `ServiceApplication` embedding.
 
 ---
 
@@ -273,22 +379,43 @@ runs = index.query_runs(
 failed = index.query_cases(CaseQueryFilter(status=MetricStatus.FAIL, mandatory_only=True))
 ```
 
+### In-Process HTTP Service Dispatcher (`ServiceApplication`)
+
+```python
+import json
+
+from evalforge_maestro import ServiceApplication, ServiceConfig
+
+app = ServiceApplication(
+    ServiceConfig(storage_dir=".evalforge", local_only=True, mock_mode=True),
+    auth_token="service-secret",
+)
+status, headers, body = app.handle_request(
+    "GET",
+    "/health",
+    headers={"Authorization": "Bearer service-secret"},
+)
+assert status == 200 and json.loads(body.decode("utf-8"))["status"] == "ok"
+```
+
 ---
 
 ## Documentation & CI Templates
 
+- **[Remote Evaluation Service Guide (`docs/remote-service.md`)](docs/remote-service.md)**: Strict scope boundary, security posture (pre-bind auth policy, `hmac.compare_digest`, `local_only`, `--block-pii`, `413` size limits), complete 13-endpoint API reference, `curl` workflows, and in-process `ServiceApplication` embedding.
+- **[Consumer CI & Small-Judge Calibration Guide (`docs/calibration-and-ci.md`)](docs/calibration-and-ci.md)**: Downstream `docpipe-maestro` `fts5_hybrid` + cross-encoder rerank CI templates (`evalforge-hybrid-rerank.toml`), statistical cohort regression gating, and `calibrate --min-agreement` threshold calibration for local/small judges.
 - **[OpenTelemetry Trace Ingestion Guide](docs/otel-ingestion.md)**: Complete specification of supported OTel formats, GenAI/OpenInference/Traceloop attribute mapping, span ordering, tool deduplication, token anti-double-counting, clock-skew handling, case correlation, and CLI/SDK examples.
 - **[Rebuildable SQLite Query Index Guide](docs/sqlite-index.md)**: Canonical-JSON single-source-of-truth guarantees, atomic rebuild/sync mechanics, corruption recovery, SQLite DDL schema, CLI `index`/`query` flags, and Python SDK workflows.
-- **[Consumer CI Templates (`examples/ci/README.md`)](examples/ci/README.md)**: Copy-ready GitHub Actions workflow [`evalforge-ci.yml`](examples/ci/evalforge-ci.yml), offline replay config [`evalforge.toml`](examples/ci/evalforge.toml), live `docpipe-maestro` config [`evalforge-docpipe.toml`](examples/ci/evalforge-docpipe.toml), OTel trace replay config [`evalforge-otel.toml`](examples/ci/evalforge-otel.toml), and sample fixtures.
+- **[Consumer CI Templates (`examples/ci/README.md`)](examples/ci/README.md)**: Copy-ready GitHub Actions workflow [`evalforge-ci.yml`](examples/ci/evalforge-ci.yml), offline replay config [`evalforge.toml`](examples/ci/evalforge.toml), live `docpipe-maestro` config [`evalforge-docpipe.toml`](examples/ci/evalforge-docpipe.toml), OTel trace replay config [`evalforge-otel.toml`](examples/ci/evalforge-otel.toml), hybrid/rerank CI config [`evalforge-hybrid-rerank.toml`](examples/ci/evalforge-hybrid-rerank.toml), and human judge calibration samples [`calibration-samples.jsonl`](examples/ci/calibration-samples.jsonl).
 - **[Product Intent & Boundaries (`docs/intent.md`)](docs/intent.md)**: Domain scope, architectural invariants, security guarantees, and non-goals.
-- **[Post-MVP Roadmap (`docs/future-features.md`)](docs/future-features.md)**: Shipped extensions vs. upcoming milestones.
+- **[Post-MVP Roadmap (`docs/future-features.md`)](docs/future-features.md)**: Complete milestone inventory and downstream adoption status.
 
 ---
 
 ## Implemented Milestones (M1–M6 + Post-M6 Extensions)
 
 - **M1 — Evaluation Foundation (`001-evaluation-foundation`)**: Single Pydantic v2 schema source (`evalforge_maestro.types`), lazy JSONL streaming `DatasetEngine`, `CallableAdapter`, deterministic text/JSON Schema metrics (`exact_match`, `normalized_match`, `json_schema_validation`), bounded async `EvaluationOrchestrator`, and atomic `0o700`/`0o600` `.evalforge/` storage.
-- **M2 — Retrieval & RAG Evaluation (`002-retrieval-rag-evaluation`)**: Protocol-based `RAGAdapter`, lazy `DocpipeAdapter` (`[docpipe]`), dependency-free fixture importer, and versioned IR metrics (`precision_at_k`, `recall_at_k`, `mrr`, `ndcg_at_k`, `hit_rate_at_k`) with AST formula verification (`100%` branch coverage).
+- **M2 — Retrieval & RAG Evaluation (`002-retrieval-rag-evaluation`)**: Protocol-based `RAGAdapter`, lazy `DocpipeAdapter` (`[docpipe-maestro]`), dependency-free fixture importer, and versioned IR metrics (`precision_at_k`, `recall_at_k`, `mrr`, `ndcg_at_k`, `hit_rate_at_k`) with AST formula verification (`100%` branch coverage).
 - **M3 — Experiment & Regression Engine (`003-experiment-regression-engine`)**: Pinned baseline aliases, pairwise aggregate/per-case comparisons, sliding-window OLS trend slopes (`analyze_trend`), anti-masking/disagreement anomalies (`> 0.3` divergence), provenance drift alerts, and deterministic `QualityGate` (`100%` branch coverage).
 - **M4 — Model-Based Judge & Calibration Engine (`004-judge-calibration-engine`)**: Lazy LiteLLM gateway (`[judges]`), pre-network `--local-only` & `LITELLM_LOCAL_MODEL_COST_MAP` air-gap safety, randomized XML/nonce prompt-injection delimiting, offline `--mock` scoring, context-grouped bounded async batching, and human calibration (`calibrate_judge` / `CalibrationReport`).
 - **M5 — CLI, Reporting & CI Integration (`005-cli-reporting-ci`)**: Dual CLI entrypoints (`evalforge-maestro` / `evalforge_maestro`), offline `ReplayAdapter`, opt-in `--block-pii` egress guard, library-pure `evalforge_maestro.reporting` (`ReportDocument` JSON & Three-Way Markdown separating Evaluation, Regression, and Quality Gate + retrieval-vs-answer decoupling diagnostics), and copy-ready CI workflow templates.
@@ -296,6 +423,7 @@ failed = index.query_cases(CaseQueryFilter(status=MetricStatus.FAIL, mandatory_o
 - **Statistical & Embedding Metrics (`007-statistical-embedding-metrics`)**: Lazy `[embeddings]` extra (`numpy` + `litellm`) powering `EmbeddingSimilarityMetric` and `ContextEmbeddingSimilarityMetric` with strict `[judge]`/`[embedding]` isolation, SHA-256 `--mock` fallback, pre-network `--local-only` / `--block-pii` checks, pure-stdlib Student's $t$ / Welch's $t$ / one-sample $t$ confidence intervals and $p$-values (`compare_runs`, `compare_run_cohorts`, `build_pooled_cohort_run`), `--repeats` immutable cohorts, and `QualityGate.evaluate_cohort` (`fail_on_significant_regression`).
 - **OpenTelemetry Execution Trace Ingestion (`008-otel-trace-ingestion`)**: Dependency-free ingestion (`ingest_otel_spans`, `load_otel_executions`, `ReplayAdapter.from_otel_file`, `OtelExtractorConfig`, `OtelTimestampUnit`) normalizing OTLP JSON, flat span arrays, JSONL spans, and duck-typed SDK `ReadableSpan` objects across GenAI/OpenInference/Traceloop conventions into secret-scrubbed canonical `ExecutionResult` traces, plus `[otel]` / `[run].otel_traces` config precedence, `evalforge-maestro run --otel-traces`, and `evalforge-maestro ingest-otel`.
 - **Rebuildable Local SQLite Query Index (`009-sqlite-query-index`)**: Zero-dependency `SQLiteRunIndex` (`evalforge_maestro.storage`) backed atomically by canonical `.evalforge/runs/*.json`, `manifest.jsonl`, and `baselines.json` with `0o700`/`0o600` permissions, `PRAGMA journal_mode=DELETE`, transparent deletion/corruption recovery, parameterized `query_runs` / `query_cases` / `metric_history`, and CLI `evalforge-maestro index` & `query` subcommands.
+- **Optional Remote Evaluation Service & Consumer CI Guides (`010-remote-eval-service`)**: Library-pure `ServiceApplication` (`evalforge_maestro.service`), lazy stdlib `ThreadingHTTPServer` (`create_http_server`, `serve_http`), and CLI `evalforge-maestro serve` enforcing pre-bind remote auth policies (`validate_service_bind_policy`), constant-time Bearer auth, `local_only=True` defaults, `HTTP 413` body limits, secret scrubbing, and zero `http.server` cold-start leakage—paired with verified hybrid/rerank (`evalforge-hybrid-rerank.toml`) & small-judge calibration (`calibration-samples.jsonl`) CI fixtures and comprehensive guides (`docs/remote-service.md`, `docs/calibration-and-ci.md`).
 
 ---
 

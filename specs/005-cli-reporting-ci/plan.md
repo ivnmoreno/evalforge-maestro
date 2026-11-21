@@ -12,7 +12,7 @@ Milestone 5 completes the EvalForge Maestro MVP by delivering: (1) dual CLI entr
 
 **Language/Version**: Python `>=3.10` (validated across `3.10`–`3.13`, `mypy --strict`)
 
-**Primary Dependencies**: Minimal core (`pydantic>=2.7,<3`, `jsonschema>=4.23,<5`, plus `"tomli>=2.0.1; python_version < '3.11'"` loaded lazily only inside `cli/config.py`); stdlib `argparse` and `logging` for CLI/stderr telemetry (zero external `.env`, `click`, `typer`, or `rich` dependencies); optional extras `[docpipe]` and `[judges]` remain strictly lazy.
+**Primary Dependencies**: Minimal core (`pydantic>=2.7,<3`, `jsonschema>=4.23,<5`, plus `"tomli>=2.0.1; python_version < '3.11'"` loaded lazily only inside `cli/config.py`); stdlib `argparse` and `logging` for CLI/stderr telemetry (zero external `.env`, `click`, `typer`, or `rich` dependencies); optional extras `[docpipe-maestro]` and `[judges]` remain strictly lazy.
 
 **Storage**: Immutable canonical JSON/JSONL persistence under `.evalforge/` via `LocalRunStore` (`runs/<run_id>.json`, `manifest.jsonl`, `baselines.json`, `tmp/<run_id>.jsonl`, `0o700`/`0o600` permissions); user-requested file exports (`--json-out`, `--markdown-out`, `--output`) created safely on disk without mutating `.evalforge/`.
 

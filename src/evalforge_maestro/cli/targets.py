@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import importlib
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from evalforge_maestro._locality import is_remote_endpoint, validate_local_only_endpoint
+from evalforge_maestro._metric_factory import (
+    SIMPLE_JUDGE_METRIC_IDS,
+    build_metrics_from_specs,
+    check_metrics_locality_and_remote_flags,
+    construct_single_metric,
+    validate_dataset_pii_egress,
+)
 from evalforge_maestro.adapters import (
     AgentAdapter,
     CallableAdapter,
@@ -18,47 +24,15 @@ from evalforge_maestro.adapters import (
 )
 from evalforge_maestro.cli.logging_utils import CLIStructuredLogger
 from evalforge_maestro.datasets import DatasetEngine
-from evalforge_maestro.embeddings import (
-    ContextEmbeddingSimilarityMetric,
-    EmbeddingSimilarityMetric,
-)
-from evalforge_maestro.embeddings.provider import wrap_pii_guarded_embedding_metric
 from evalforge_maestro.exceptions import ConfigurationError
 from evalforge_maestro.judges.base import BaseJudgeMetric
-from evalforge_maestro.judges.metrics import (
-    AnswerCorrectnessMetric,
-    AnswerRelevanceMetric,
-    ContextRelevanceMetric,
-    CustomRubricJudgeMetric,
-    GroundednessMetric,
-)
 from evalforge_maestro.judges.security import (
     is_remote_judge_endpoint,
     validate_local_only_target,
-    validate_pii_egress,
-    wrap_pii_guarded_metric,
-)
-from evalforge_maestro.metrics import (
-    ArgumentCorrectnessMetric,
-    ExactMatchMetric,
-    ExecutionSequenceMetric,
-    FailureRecoveryMetric,
-    HitRateAtKMetric,
-    JsonSchemaValidationMetric,
-    MRRMetric,
-    NDCGAtKMetric,
-    NormalizedMatchMetric,
-    PolicyComplianceMetric,
-    PrecisionAtKMetric,
-    RecallAtKMetric,
-    ToolEfficiencyMetric,
-    ToolSelectionMetric,
 )
 from evalforge_maestro.types import (
     AgentExtractorConfig,
     CLIResolvedConfig,
-    EmbeddingAggregation,
-    EmbeddingConfig,
     JudgeConfig,
     Metric,
     MetricSpecConfig,
@@ -66,33 +40,6 @@ from evalforge_maestro.types import (
     TargetAdapter,
     TargetType,
 )
-
-_EMBEDDING_METRIC_IDS = frozenset({"embedding_similarity", "context_embedding_similarity"})
-
-_SIMPLE_JUDGE_FACTORIES: dict[str, Callable[..., BaseJudgeMetric]] = {
-    "groundedness": GroundednessMetric,
-    "answer_relevance": AnswerRelevanceMetric,
-    "context_relevance": ContextRelevanceMetric,
-    "answer_correctness": AnswerCorrectnessMetric,
-}
-_DIRECT_DETERMINISTIC_FACTORIES: dict[str, Callable[..., Metric]] = {
-    "exact_match": ExactMatchMetric,
-    "normalized_match": NormalizedMatchMetric,
-    "json_schema_validation": JsonSchemaValidationMetric,
-    "mrr": MRRMetric,
-    "tool_selection": ToolSelectionMetric,
-    "argument_correctness": ArgumentCorrectnessMetric,
-    "execution_sequence": ExecutionSequenceMetric,
-    "tool_efficiency": ToolEfficiencyMetric,
-    "policy_compliance": PolicyComplianceMetric,
-    "failure_recovery": FailureRecoveryMetric,
-}
-_TOPK_RETRIEVAL_FACTORIES: dict[str, Callable[..., Metric]] = {
-    "precision_at_k": PrecisionAtKMetric,
-    "recall_at_k": RecallAtKMetric,
-    "ndcg_at_k": NDCGAtKMetric,
-    "hit_rate_at_k": HitRateAtKMetric,
-}
 
 
 def _load_python_symbol(entrypoint: str) -> Any:
@@ -124,170 +71,6 @@ def _load_python_symbol(entrypoint: str) -> Any:
     return current
 
 
-def _normalized_threshold_params(params: Mapping[str, Any]) -> dict[str, Any]:
-    normalized = dict(params)
-    if "pass_threshold" in normalized and "threshold" not in normalized:
-        normalized["threshold"] = normalized.pop("pass_threshold")
-    return normalized
-
-
-def _build_judge_config(
-    spec: MetricSpecConfig,
-    resolved: CLIResolvedConfig,
-) -> JudgeConfig:
-    pass_threshold = spec.params.get(
-        "pass_threshold",
-        spec.params.get("threshold", resolved.judge.pass_threshold),
-    )
-    temperature = spec.params.get("temperature", resolved.judge.temperature)
-    prompt_version = spec.params.get("prompt_version", resolved.judge.prompt_version)
-    return JudgeConfig(
-        model=str(spec.params.get("model", resolved.judge.model)),
-        api_base=spec.params.get("api_base", resolved.judge.api_base),
-        temperature=temperature,
-        pass_threshold=pass_threshold,
-        max_retries=resolved.judge.max_retries,
-        retry_backoff_seconds=resolved.judge.retry_backoff_seconds,
-        timeout_seconds=resolved.judge.timeout_seconds,
-        local_only=resolved.security.local_only or resolved.judge.local_only,
-        mock_mode=resolved.judge.mock_mode,
-        seed=resolved.judge.seed,
-        prompt_version=str(prompt_version),
-    )
-
-
-def _build_embedding_config(
-    spec: MetricSpecConfig,
-    resolved: CLIResolvedConfig,
-) -> EmbeddingConfig:
-    emb = resolved.embedding
-    allowed_keys = {
-        "model",
-        "api_base",
-        "pass_threshold",
-        "threshold",
-        "max_input_chars",
-    }
-    if spec.metric_id == "context_embedding_similarity":
-        allowed_keys.add("aggregation")
-    unknown = set(spec.params) - allowed_keys
-    if unknown:
-        raise ConfigurationError(
-            f"Unsupported parameter(s) for embedding metric {spec.metric_id!r}: {sorted(unknown)}"
-        )
-    pass_threshold = spec.params.get(
-        "pass_threshold",
-        spec.params.get("threshold", emb.pass_threshold),
-    )
-    raw_agg = spec.params.get("aggregation", emb.aggregation)
-    aggregation = (
-        raw_agg
-        if isinstance(raw_agg, EmbeddingAggregation)
-        else EmbeddingAggregation(str(raw_agg).strip().lower())
-    )
-    default_max_chars = (
-        emb.max_input_chars
-        if emb.max_input_chars is not None
-        else resolved.execution.max_context_chars
-    )
-    max_input_chars = spec.params.get("max_input_chars", default_max_chars)
-    return EmbeddingConfig(
-        model=str(spec.params.get("model", emb.model)),
-        api_base=spec.params.get("api_base", emb.api_base),
-        pass_threshold=pass_threshold,
-        aggregation=aggregation,
-        max_retries=emb.max_retries,
-        retry_backoff_seconds=emb.retry_backoff_seconds,
-        timeout_seconds=emb.timeout_seconds,
-        max_input_chars=max_input_chars,
-        local_only=resolved.security.local_only or emb.local_only,
-        mock_mode=emb.mock_mode,
-    )
-
-
-def _construct_single_metric(
-    spec: MetricSpecConfig,
-    resolved: CLIResolvedConfig,
-    *,
-    raw_api_key: str | None,
-    raw_embedding_api_key: str | None = None,
-) -> Any:
-    mid = spec.metric_id
-    params = _normalized_threshold_params(spec.params)
-
-    try:
-        direct_factory = _DIRECT_DETERMINISTIC_FACTORIES.get(mid)
-        if direct_factory is not None:
-            return direct_factory(**params)
-        topk_factory = _TOPK_RETRIEVAL_FACTORIES.get(mid)
-        if topk_factory is not None:
-            k_val = params.pop("k", 5)
-            return topk_factory(k_val, **params)
-        if mid in _EMBEDDING_METRIC_IDS:
-            emb_cfg = _build_embedding_config(spec, resolved)
-            if mid == "embedding_similarity":
-                emb_metric: Any = EmbeddingSimilarityMetric(
-                    config=emb_cfg,
-                    api_key=raw_embedding_api_key,
-                )
-            else:
-                emb_metric = ContextEmbeddingSimilarityMetric(
-                    config=emb_cfg,
-                    api_key=raw_embedding_api_key,
-                )
-            return wrap_pii_guarded_embedding_metric(
-                emb_metric,
-                block_pii=resolved.security.block_pii,
-            )
-        if mid in _SIMPLE_JUDGE_FACTORIES:
-            allowed_judge_keys = {
-                "model",
-                "api_base",
-                "temperature",
-                "pass_threshold",
-                "threshold",
-                "prompt_version",
-            }
-            unknown = set(spec.params) - allowed_judge_keys
-            if unknown:
-                raise ConfigurationError(
-                    f"Unsupported parameter(s) for judge metric {mid!r}: {sorted(unknown)}"
-                )
-            cfg = _build_judge_config(spec, resolved)
-            factory = _SIMPLE_JUDGE_FACTORIES[mid]
-            metric = factory(config=cfg, api_key=raw_api_key)
-            return wrap_pii_guarded_metric(metric, block_pii=resolved.security.block_pii)
-        if mid == "custom_rubric":
-            rubric = spec.params.get("rubric")
-            if not isinstance(rubric, str) or not rubric.strip():
-                raise ConfigurationError(
-                    "Metric 'custom_rubric' requires a non-empty 'rubric' parameter"
-                )
-            cfg = _build_judge_config(spec, resolved)
-            metric = CustomRubricJudgeMetric(
-                rubric,
-                metric_id=str(spec.params.get("metric_id", "custom_rubric")),
-                metric_version=str(spec.params.get("metric_version", "1.0.0")),
-                what_it_measures=str(
-                    spec.params.get(
-                        "what_it_measures",
-                        "Evaluates target outputs against a caller-defined rubric.",
-                    )
-                ),
-                require_reference=bool(spec.params.get("require_reference", False)),
-                require_context=bool(spec.params.get("require_context", False)),
-                config=cfg,
-                api_key=raw_api_key,
-            )
-            return wrap_pii_guarded_metric(metric, block_pii=resolved.security.block_pii)
-    except (TypeError, ValueError) as exc:
-        raise ConfigurationError(
-            f"Invalid configuration parameters for metric {mid!r}: {exc}"
-        ) from exc
-
-    raise ConfigurationError(f"Unknown metric identifier: {mid!r}")
-
-
 def build_metrics_from_config(
     resolved: CLIResolvedConfig,
     *,
@@ -295,21 +78,16 @@ def build_metrics_from_config(
     raw_embedding_api_key: str | None = None,
 ) -> list[Metric]:
     """Instantiate configured metrics for `run`, rejecting empty or unknown definitions."""
-    if not resolved.metrics:
-        raise ConfigurationError(
-            "No metrics configured. Specify --metric, EVALFORGE_METRICS, or [metrics] in config."
-        )
-    built: list[Metric] = []
-    for spec in resolved.metrics:
-        built.append(
-            _construct_single_metric(
-                spec,
-                resolved,
-                raw_api_key=raw_api_key,
-                raw_embedding_api_key=raw_embedding_api_key,
-            )
-        )
-    return built
+    return build_metrics_from_specs(
+        resolved.metrics,
+        judge_settings=resolved.judge,
+        embedding_settings=resolved.embedding,
+        local_only=resolved.security.local_only,
+        block_pii=resolved.security.block_pii,
+        default_max_context_chars=resolved.execution.max_context_chars,
+        raw_api_key=raw_api_key,
+        raw_embedding_api_key=raw_embedding_api_key,
+    )
 
 
 def build_calibration_judge(
@@ -319,13 +97,21 @@ def build_calibration_judge(
     raw_api_key: str | None,
 ) -> BaseJudgeMetric:
     """Build one BaseJudgeMetric instance for judge calibration workflows."""
-    if spec.metric_id not in _SIMPLE_JUDGE_FACTORIES and spec.metric_id != "custom_rubric":
+    if spec.metric_id not in SIMPLE_JUDGE_METRIC_IDS and spec.metric_id != "custom_rubric":
         raise ConfigurationError(
             f"Metric {spec.metric_id!r} does not support judge calibration "
-            f"(choose one of: {sorted((*_SIMPLE_JUDGE_FACTORIES, 'custom_rubric'))})"
+            f"(choose one of: {sorted((*SIMPLE_JUDGE_METRIC_IDS, 'custom_rubric'))})"
         )
-    metric = _construct_single_metric(spec, resolved, raw_api_key=raw_api_key)
-    return metric  # type: ignore[no-any-return]
+    metric = construct_single_metric(
+        spec,
+        judge_settings=resolved.judge,
+        embedding_settings=resolved.embedding,
+        local_only=resolved.security.local_only,
+        block_pii=resolved.security.block_pii,
+        default_max_context_chars=resolved.execution.max_context_chars,
+        raw_api_key=raw_api_key,
+    )
+    return metric  # type: ignore[return-value]
 
 
 def _validate_replay_alignment(
@@ -537,29 +323,7 @@ def preflight_run_security(
     metrics: Sequence[Metric],
 ) -> None:
     """Enforce --local-only endpoint locality and opt-in --block-pii pre-network checks."""
-    any_remote_judge = False
-    any_remote_embedding = False
-    for metric in metrics:
-        judge_cfg = getattr(metric, "judge_config", None)
-        if isinstance(judge_cfg, JudgeConfig):
-            validate_local_only_target(judge_cfg)
-            if is_remote_judge_endpoint(judge_cfg):
-                any_remote_judge = True
-        emb_cfg = getattr(metric, "embedding_config", None)
-        if isinstance(emb_cfg, EmbeddingConfig):
-            validate_local_only_endpoint(
-                local_only=emb_cfg.local_only,
-                mock_mode=emb_cfg.mock_mode,
-                model=emb_cfg.model,
-                api_base=emb_cfg.api_base,
-                label="embedding",
-            )
-            if is_remote_endpoint(
-                model=emb_cfg.model,
-                api_base=emb_cfg.api_base,
-                mock_mode=emb_cfg.mock_mode,
-            ):
-                any_remote_embedding = True
+    any_remote_judge, any_remote_embedding = check_metrics_locality_and_remote_flags(metrics)
 
     t_cfg = resolved.target
     if resolved.security.local_only and t_cfg.target_type == TargetType.DOCPIPE:
@@ -591,13 +355,4 @@ def preflight_run_security(
             or is_remote_docpipe
             or (any_remote_embedding and not resolved.embedding.mock_mode)
         ):
-            for case in dataset.iter_cases(max_cases=resolved.execution.max_dataset_cases):
-                validate_pii_egress(
-                    {
-                        "input": case.input,
-                        "reference": case.reference,
-                        "expected_context": case.expected_context,
-                    },
-                    enabled=True,
-                    context_label=f"dataset case {case.id!r}",
-                )
+            validate_dataset_pii_egress(dataset, max_cases=resolved.execution.max_dataset_cases)

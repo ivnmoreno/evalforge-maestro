@@ -264,7 +264,7 @@ def test_cli_run_live_callable_rag_and_missing_docpipe_extra(
     assert code_dp == 3
     err_obj = CLIErrorPayload.model_validate_json(out_dp)
     assert err_obj.exit_code == 3
-    assert "docpipe" in err_dp
+    assert "[docpipe-maestro]" in err_dp
 
 
 def test_cli_run_exit_codes_1_2_3_4_and_quiet_stream_control(

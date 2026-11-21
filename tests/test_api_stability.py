@@ -15,6 +15,7 @@ from evalforge_maestro import (
     metrics,
     regression,
     reporting,
+    service,
     storage,
 )
 from evalforge_maestro.exceptions import (
@@ -197,6 +198,18 @@ def test_public_all_exports_and_exception_hierarchy() -> None:
         "RunSortOrder",
         "SQLiteIndexStatus",
         "SQLiteRunIndex",
+        "ServiceApplication",
+        "ServiceCompareRequest",
+        "ServiceCompareResponse",
+        "ServiceConfig",
+        "ServiceErrorResponse",
+        "ServiceEvaluateRequest",
+        "ServiceEvaluateResponse",
+        "ServiceHealthResponse",
+        "ServiceOtelIngestRequest",
+        "ServiceOtelIngestResponse",
+        "ServiceReportRequest",
+        "ServiceReportResponse",
         "SignificanceStatus",
         "StatisticalMethod",
         "StatisticalSummary",
@@ -1078,3 +1091,163 @@ def test_public_entrypoint_signatures_remain_pinned() -> None:
         ("limit", "KEYWORD_ONLY"),
         ("auto_sync", "KEYWORD_ONLY"),
     ]
+
+
+def test_m10_service_api_stability() -> None:
+    from evalforge_maestro.types import (
+        ServiceCompareRequest,
+        ServiceCompareResponse,
+        ServiceConfig,
+        ServiceErrorResponse,
+        ServiceEvaluateRequest,
+        ServiceEvaluateResponse,
+        ServiceHealthResponse,
+        ServiceOtelIngestRequest,
+        ServiceOtelIngestResponse,
+        ServiceReportRequest,
+        ServiceReportResponse,
+    )
+
+    assert set(service.__all__) == {
+        "ServiceApplication",
+        "create_http_server",
+        "serve_http",
+        "validate_service_bind_policy",
+    }
+    assert evalforge_maestro.ServiceApplication is service.ServiceApplication
+    try:
+        evalforge_maestro.__getattr__("__nonexistent_symbol__")
+    except AttributeError:
+        pass
+    else:  # pragma: no cover - assertion safeguard
+        raise AssertionError("Expected AttributeError for unknown top-level symbol")
+    assert _param_spec(service.validate_service_bind_policy) == [
+        ("config", "POSITIONAL_OR_KEYWORD"),
+        ("auth_token", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(service.ServiceApplication.__init__) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("config", "POSITIONAL_OR_KEYWORD"),
+        ("auth_token", "KEYWORD_ONLY"),
+        ("judge_api_key", "KEYWORD_ONLY"),
+        ("embedding_api_key", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(service.ServiceApplication.handle_request) == [
+        ("self", "POSITIONAL_OR_KEYWORD"),
+        ("method", "POSITIONAL_OR_KEYWORD"),
+        ("raw_path", "POSITIONAL_OR_KEYWORD"),
+        ("body", "KEYWORD_ONLY"),
+        ("headers", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(service.create_http_server) == [
+        ("config", "POSITIONAL_OR_KEYWORD"),
+        ("auth_token", "KEYWORD_ONLY"),
+        ("judge_api_key", "KEYWORD_ONLY"),
+        ("embedding_api_key", "KEYWORD_ONLY"),
+    ]
+    assert _param_spec(service.serve_http) == [
+        ("config", "POSITIONAL_OR_KEYWORD"),
+        ("auth_token", "KEYWORD_ONLY"),
+        ("judge_api_key", "KEYWORD_ONLY"),
+        ("embedding_api_key", "KEYWORD_ONLY"),
+    ]
+
+    assert set(ServiceConfig.model_fields) >= {
+        "host",
+        "port",
+        "storage_dir",
+        "local_only",
+        "block_pii",
+        "mock_mode",
+        "max_request_bytes",
+        "auth_token_configured",
+    }
+    assert set(ServiceHealthResponse.model_fields) >= {
+        "schema_version",
+        "status",
+        "package_version",
+        "storage_dir",
+        "local_only",
+        "mock_mode",
+        "indexed_run_count",
+        "canonical_run_count",
+    }
+    assert set(ServiceErrorResponse.model_fields) >= {
+        "schema_version",
+        "status_code",
+        "error_type",
+        "message",
+        "hint",
+    }
+    assert set(ServiceOtelIngestRequest.model_fields) >= {
+        "payload",
+        "extractors",
+        "dataset",
+        "case_id_map",
+        "system_version",
+        "model_id",
+    }
+    assert set(ServiceOtelIngestResponse.model_fields) >= {
+        "schema_version",
+        "count",
+        "executions",
+    }
+    assert set(ServiceEvaluateRequest.model_fields) >= {
+        "cases",
+        "executions",
+        "otel_payload",
+        "otel_extractors",
+        "case_id_map",
+        "dataset_id",
+        "dataset_version",
+        "metrics",
+        "judge",
+        "embedding",
+        "gate",
+        "max_context_chars",
+        "max_concurrency",
+        "seed",
+        "system_version",
+        "model_id",
+        "run_id",
+        "persist",
+        "include_markdown",
+    }
+    assert set(ServiceEvaluateResponse.model_fields) >= {
+        "schema_version",
+        "persisted",
+        "evaluation",
+        "gate",
+        "report",
+        "markdown",
+    }
+    assert set(ServiceCompareRequest.model_fields) >= {
+        "candidate_run_id",
+        "candidate_run_ids",
+        "baseline_ref",
+        "baseline_run_ids",
+        "policy",
+        "include_markdown",
+    }
+    assert set(ServiceCompareResponse.model_fields) >= {
+        "schema_version",
+        "comparison",
+        "gate",
+        "report",
+        "markdown",
+    }
+    assert set(ServiceReportRequest.model_fields) >= {
+        "run_id",
+        "compare_run_id",
+        "baseline_ref",
+        "trend_window",
+        "dataset_id",
+        "model_id",
+        "title",
+        "include_markdown",
+    }
+    assert set(ServiceReportResponse.model_fields) >= {
+        "schema_version",
+        "report",
+        "markdown",
+    }

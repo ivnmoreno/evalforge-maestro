@@ -137,7 +137,7 @@ jobs:
           try:
               evalforge_maestro.DocpipeAdapter()
           except evalforge_maestro.MissingExtraError as exc:
-              assert "docpipe" in str(exc)
+              assert "docpipe-maestro" in str(exc)
           else:
               raise AssertionError("Expected MissingExtraError")
           PY

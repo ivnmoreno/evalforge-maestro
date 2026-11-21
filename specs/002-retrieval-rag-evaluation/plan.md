@@ -6,13 +6,13 @@
 
 ## Summary
 
-Milestone 002 adds retrieval and RAG evaluation atop Milestone 001's foundation: `ExpectedContextItem` and `RAGExtractorConfig` contracts in `types.py`; five pure deterministic IR metrics (`precision_at_k`, `recall_at_k`, `mrr`, `ndcg_at_k`, `hit_rate_at_k`) in `metrics/retrieval.py` with binary and graded integer relevance, rank sorting, `match_parent_id`, duplicate deduplication, and `NOT_APPLICABLE` / `INCONCLUSIVE` guards; protocol-based `RAGAdapter` supporting sync/async targets and configurable mapping/attribute/callable extractors; lazy-imported `DocpipeAdapter` behind `[docpipe]` wrapping `retrieve()` and `answer_detailed()`; and a dependency-free `docpipe-maestro` fixture loader (`load_docpipe_fixture` / `DatasetEngine.from_docpipe_fixture`).
+Milestone 002 adds retrieval and RAG evaluation atop Milestone 001's foundation: `ExpectedContextItem` and `RAGExtractorConfig` contracts in `types.py`; five pure deterministic IR metrics (`precision_at_k`, `recall_at_k`, `mrr`, `ndcg_at_k`, `hit_rate_at_k`) in `metrics/retrieval.py` with binary and graded integer relevance, rank sorting, `match_parent_id`, duplicate deduplication, and `NOT_APPLICABLE` / `INCONCLUSIVE` guards; protocol-based `RAGAdapter` supporting sync/async targets and configurable mapping/attribute/callable extractors; lazy-imported `DocpipeAdapter` behind `[docpipe-maestro]` wrapping `retrieve()` and `answer_detailed()`; and a dependency-free `docpipe-maestro` fixture loader (`load_docpipe_fixture` / `DatasetEngine.from_docpipe_fixture`).
 
 ## Technical Context
 
 **Language/Version**: Python 3.10+ (verified locally on CPython 3.13.17; cross-OS target `ubuntu-latest`, `macos-latest`, `windows-latest`)
 
-**Primary Dependencies**: Core dependencies remain strictly `pydantic>=2.7,<3` and `jsonschema>=4.23,<5`; `docpipe-maestro>=0.2` is added strictly as optional extra `[docpipe]` under `[project.optional-dependencies]` and lazy-imported only when `DocpipeAdapter` resolves `docpipe_maestro`
+**Primary Dependencies**: Core dependencies remain strictly `pydantic>=2.7,<3` and `jsonschema>=4.23,<5`; `docpipe-maestro>=0.2` is added strictly as optional extra `[docpipe-maestro]` under `[project.optional-dependencies]` and lazy-imported only when `DocpipeAdapter` resolves `docpipe_maestro`
 
 **Storage**: Reuses Milestone 001 `LocalRunStore` (`.evalforge/runs/<run_id>.json`, `.evalforge/manifest.jsonl`, `.evalforge/tmp/<run_id>.jsonl`) with `RetrievedChunk` and `TokenUsage` actively populated on `ExecutionResult`
 
@@ -22,7 +22,7 @@ Milestone 002 adds retrieval and RAG evaluation atop Milestone 001's foundation:
 
 **Project Type**: Standalone Python library / SDK (`src/evalforge_maestro/`)
 
-**Performance Goals**: Pure-stdlib IR calculations (`math.log2`, `dict`/`set` intersections) with zero `numpy`/`scipy` overhead; zero extra cold-start import latency when `[docpipe]` is absent
+**Performance Goals**: Pure-stdlib IR calculations (`math.log2`, `dict`/`set` intersections) with zero `numpy`/`scipy` overhead; zero extra cold-start import latency when `[docpipe-maestro]` is absent
 
 **Constraints**: Strict unidirectional imports (`types`, `datasets`, `metrics`, `execution`, `storage` NEVER import `adapters` or `docpipe_maestro`), 6-decimal rounding, decoupled retrieval vs. answer scoring, mandatory case failure preservation
 
@@ -61,7 +61,7 @@ specs/002-retrieval-rag-evaluation/
 ### Source Code (repository root)
 
 ```text
-pyproject.toml                                 # Add optional extra: docpipe = ["docpipe-maestro>=0.2"]
+pyproject.toml                                 # Add optional extra: docpipe-maestro = ["docpipe-maestro>=0.2"]
 uv.lock                                        # Re-locked with optional docpipe extra metadata
 src/
 └── evalforge_maestro/
@@ -93,7 +93,7 @@ tests/
     └── test_metric_formulas.py                # Pin AST source hashes for all 5 IR metric scoring functions & preprocessing helper
 ```
 
-**Structure Decision**: Extends the existing Milestone 001 single-package `src/evalforge_maestro/` layout seamlessly while keeping all unidirectional module boundaries intact (`metrics/retrieval.py` and `datasets/docpipe_fixture.py` never import `adapters/` or `docpipe_maestro`; `DocpipeAdapter` isolates optional `[docpipe]` runtime imports behind lazy loading).
+**Structure Decision**: Extends the existing Milestone 001 single-package `src/evalforge_maestro/` layout seamlessly while keeping all unidirectional module boundaries intact (`metrics/retrieval.py` and `datasets/docpipe_fixture.py` never import `adapters/` or `docpipe_maestro`; `DocpipeAdapter` isolates optional `[docpipe-maestro]` runtime imports behind lazy loading).
 
 ## Complexity Tracking
 

@@ -46,7 +46,7 @@ Repository = "https://github.com/ivnmoreno/evalforge-maestro"
 Issues = "https://github.com/ivnmoreno/evalforge-maestro/issues"
 
 [project.optional-dependencies]
-docpipe = [
+docpipe-maestro = [
     "docpipe-maestro>=0.4.1",
 ]
 embeddings = [
