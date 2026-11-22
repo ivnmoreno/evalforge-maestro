@@ -1,5 +1,12 @@
 # EvalForge Maestro
 
+[![PyPI](https://img.shields.io/pypi/v/evalforge-maestro.svg)](https://pypi.org/project/evalforge-maestro/)
+[![CI](https://github.com/ivnmoreno/evalforge-maestro/actions/workflows/ci.yml/badge.svg)](https://github.com/ivnmoreno/evalforge-maestro/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![Type Checked: mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
+
 **Evaluate. Compare. Verify.**
 
 > *"EvalForge Maestro is an independent evaluation and regression verification engine — never an LLM runtime, RAG indexer, or agent framework."*
