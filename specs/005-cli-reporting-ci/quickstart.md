@@ -1,6 +1,6 @@
 # Quickstart Validation Guide: Milestone 5 — CLI, Reporting & CI Integration
 
-**Feature**: `005-cli-reporting-ci` | **Contracts**: [cli.md](file:///home/maestro/LifeFolder/10_PUBLIC/projects/evalforge-maestro/specs/005-cli-reporting-ci/contracts/cli.md), [public-api.md](file:///home/maestro/LifeFolder/10_PUBLIC/projects/evalforge-maestro/specs/005-cli-reporting-ci/contracts/public-api.md)
+**Feature**: `005-cli-reporting-ci` | **Contracts**: [cli.md](contracts/cli.md), [public-api.md](contracts/public-api.md)
 
 ## 1. Cold-Start & Console Entrypoint Verification
 

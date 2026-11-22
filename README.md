@@ -410,6 +410,7 @@ assert status == 200 and json.loads(body.decode("utf-8"))["status"] == "ok"
 - **[Consumer CI Templates (`examples/ci/README.md`)](examples/ci/README.md)**: Copy-ready GitHub Actions workflow [`evalforge-ci.yml`](examples/ci/evalforge-ci.yml), offline replay config [`evalforge.toml`](examples/ci/evalforge.toml), live `docpipe-maestro` config [`evalforge-docpipe.toml`](examples/ci/evalforge-docpipe.toml), OTel trace replay config [`evalforge-otel.toml`](examples/ci/evalforge-otel.toml), hybrid/rerank CI config [`evalforge-hybrid-rerank.toml`](examples/ci/evalforge-hybrid-rerank.toml), and human judge calibration samples [`calibration-samples.jsonl`](examples/ci/calibration-samples.jsonl).
 - **[Product Intent & Boundaries (`docs/intent.md`)](docs/intent.md)**: Domain scope, architectural invariants, security guarantees, and non-goals.
 - **[Post-MVP Roadmap (`docs/future-features.md`)](docs/future-features.md)**: Complete milestone inventory and downstream adoption status.
+- **[Architecture & Implementation Review (`docs/verdict.md`)](docs/verdict.md)**: `v0.3.0` codebase evaluation, deployment/security gap analysis, and verification summary.
 
 ---
 

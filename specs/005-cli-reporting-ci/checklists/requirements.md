@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-11-19
-**Feature**: [spec.md](file:///home/maestro/LifeFolder/10_PUBLIC/projects/evalforge-maestro/specs/005-cli-reporting-ci/spec.md)
+**Feature**: [spec.md](../spec.md)
 
 ## Content Quality
 

@@ -1,6 +1,6 @@
 # Implementation Plan: Milestone 5 — CLI, Reporting & CI Integration
 
-**Branch**: `005-cli-reporting-ci` | **Date**: 2026-11-19 | **Spec**: [spec.md](file:///home/maestro/LifeFolder/10_PUBLIC/projects/evalforge-maestro/specs/005-cli-reporting-ci/spec.md)
+**Branch**: `005-cli-reporting-ci` | **Date**: 2026-11-19 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `/specs/005-cli-reporting-ci/spec.md`
 

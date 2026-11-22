@@ -1,10 +1,10 @@
 # Research: Milestone 5 — CLI, Reporting & CI Integration (`005-cli-reporting-ci`)
 
-**Date**: 2026-11-19 | **Feature**: [spec.md](file:///home/maestro/LifeFolder/10_PUBLIC/projects/evalforge-maestro/specs/005-cli-reporting-ci/spec.md)
+**Date**: 2026-11-19 | **Feature**: [spec.md](spec.md)
 
 ## Overview
 
-Milestone 5 completes the EvalForge Maestro MVP by exposing a dual-entrypoint CLI (`evalforge-maestro`, `evalforge_maestro`), deterministic configuration resolution, opt-in pre-network PII egress blocking, library-pure JSON and Markdown diagnostic reporting, user-facing GitHub Actions CI workflow templates, and full distribution/release pipeline verification. All technical unknowns from `Technical Context` were evaluated against [constitution.md](file:///home/maestro/LifeFolder/10_PUBLIC/projects/evalforge-maestro/.specify/memory/constitution.md), [intent.md](file:///home/maestro/LifeFolder/10_PUBLIC/projects/evalforge-maestro/docs/intent.md), and existing M1–M4 subsystem boundaries.
+Milestone 5 completes the EvalForge Maestro MVP by exposing a dual-entrypoint CLI (`evalforge-maestro`, `evalforge_maestro`), deterministic configuration resolution, opt-in pre-network PII egress blocking, library-pure JSON and Markdown diagnostic reporting, user-facing GitHub Actions CI workflow templates, and full distribution/release pipeline verification. All technical unknowns from `Technical Context` were evaluated against [constitution.md](../../.specify/memory/constitution.md), [intent.md](../../docs/intent.md), and existing M1–M4 subsystem boundaries.
 
 ---
 

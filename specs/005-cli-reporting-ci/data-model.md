@@ -1,6 +1,6 @@
 # Data Model: Milestone 5 — CLI, Reporting & CI Integration (`005-cli-reporting-ci`)
 
-**Date**: 2026-11-19 | **Feature**: [spec.md](file:///home/maestro/LifeFolder/10_PUBLIC/projects/evalforge-maestro/specs/005-cli-reporting-ci/spec.md)
+**Date**: 2026-11-19 | **Feature**: [spec.md](spec.md)
 
 All Milestone 5 data contracts live exclusively in `src/evalforge_maestro/types.py` as strict Pydantic v2 models (`extra="forbid"`, immutable/validated) extending M1–M4 schemas without breaking existing persisted `.evalforge/` artifacts or M4 `JudgeConfig` fingerprints.
 

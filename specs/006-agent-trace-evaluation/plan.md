@@ -1,6 +1,6 @@
 # Implementation Plan: Milestone 6 — Agent Trace Evaluation
 
-**Branch**: `006-agent-trace-evaluation` | **Date**: 2026-11-20 | **Spec**: [spec.md](file:///home/maestro/LifeFolder/10_PUBLIC/projects/evalforge-maestro/specs/006-agent-trace-evaluation/spec.md)
+**Branch**: `006-agent-trace-evaluation` | **Date**: 2026-11-20 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `/specs/006-agent-trace-evaluation/spec.md`
 
