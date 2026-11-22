@@ -39,6 +39,25 @@ By architectural design, the HTTP layer sits strictly **outside** the core evalu
    - Path parameters (`/v1/runs/{run_id}`) reject `..`, slashes, whitespace, and invalid characters via `_validate_safe_identifier` (`HTTP 400`).
    - All JSON responses set `Cache-Control: no-store` and scrub secret/token strings via `redact_secrets` and `scrub_secret_text`. Access logs emitted by `_EvalRequestHandler` scrub URLs/messages via Python `logging` (`NullHandler` by default in library code; `stderr` only in CLI).
 
+### 2.1 Deployment Boundary & External Exposure
+
+`evalforge-maestro serve` (`ThreadingHTTPServer`) is intentionally scoped for **local development, internal CI runners, and trusted loopback/internal integration**—not as a standalone public edge server. Specifically, the built-in stdlib server provides **no TLS termination, no rate limiting, no bounded worker thread pool, and no per-connection socket timeouts**.
+
+```text
+External Client
+   │  HTTPS (TLS), rate limiting, edge auth, request timeouts
+   ▼
+Reverse Proxy / API Gateway (Nginx, Caddy, Envoy, Cloud ALB)
+   │  Internal HTTP + Bearer token + max_request_bytes
+   ▼
+EvalForge HTTP Service (`evalforge-maestro serve`)
+   │  OR embed `ServiceApplication` directly inside FastAPI / Starlette / Gunicorn+Uvicorn
+   ▼
+Evaluation Engine & Canonical Storage (`.evalforge/`)
+```
+
+For any deployment exposed beyond localhost or trusted internal networks, either **terminate TLS, enforce rate limits, and apply connection timeouts at an upstream reverse proxy / API gateway**, or **mount the transport-agnostic `ServiceApplication` directly inside a production ASGI/WSGI server** (see [Section 5.2](#52-embedding-serviceapplication-in-process-zero-extra-web-frameworks-needed--or-mountable-in-asgiwsgi)).
+
 ---
 
 ## 3. CLI Usage (`evalforge-maestro serve`)
