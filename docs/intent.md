@@ -5,7 +5,6 @@
 > Items marked `New Project (Greenfield)` or `Deferred to Post-MVP` below reflect initial MVP scoping rather than current capabilities.
 
 **Document Status:** Final Baseline Intent & Quality Specification (v1.4)  
-**Target Workflow:** GitHub Spec-Kit (`/speckit.constitution` -> `/speckit.specify`)  
 **Project Status:** New Project (Greenfield)
 
 ---

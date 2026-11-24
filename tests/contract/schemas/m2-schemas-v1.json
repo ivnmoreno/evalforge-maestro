@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "EvalForge Maestro M2 Schema Extensions (v1.0)",
-  "$comment": "Additive Milestone 2 $defs overlaying specs/001-evaluation-foundation/contracts/schemas-v1.json: refines EvaluationCase.expected_context via EvaluationCaseExpectedContext and tightens RetrievedChunk.rank to minimum 1.",
+  "$comment": "Additive Milestone 2 $defs overlaying m1-schemas-v1.json: refines EvaluationCase.expected_context via EvaluationCaseExpectedContext and tightens RetrievedChunk.rank to minimum 1.",
   "$defs": {
     "ExpectedContextItem": {
       "type": "object",
