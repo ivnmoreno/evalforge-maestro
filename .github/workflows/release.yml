@@ -24,7 +24,7 @@ jobs:
       - name: Sync locked dev environment
         run: uv sync --frozen --extra dev
 
-      - name: Run full Constitution Principle VII verification gates
+      - name: Run full verification and coverage gates
         run: |
           uv lock --check
           uv run ruff format --check .

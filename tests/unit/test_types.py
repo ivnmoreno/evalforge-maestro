@@ -256,11 +256,12 @@ def test_run_record_manifest_orchestrator_config_and_schema_parity() -> None:
     assert meta.metric_id == "exact_match"
 
     # Parity check against M1 schemas overlaid with additive M3 and M6 fields
-    schema_path = Path("specs/001-evaluation-foundation/contracts/schemas-v1.json")
+    schemas_dir = Path(__file__).resolve().parents[1] / "contract" / "schemas"
+    schema_path = schemas_dir / "m1-schemas-v1.json"
     contract_schema: dict[str, Any] = json.loads(schema_path.read_text(encoding="utf-8"))
-    m3_path = Path("specs/003-experiment-regression-engine/contracts/schemas-v1.json")
+    m3_path = schemas_dir / "m3-schemas-v1.json"
     m3_schema: dict[str, Any] = json.loads(m3_path.read_text(encoding="utf-8"))
-    m6_path = Path("specs/006-agent-trace-evaluation/contracts/schemas-v1.json")
+    m6_path = schemas_dir / "m6-schemas-v1.json"
     m6_schema: dict[str, Any] = json.loads(m6_path.read_text(encoding="utf-8"))
     defs = {**contract_schema["$defs"], **m3_schema["$defs"], **m6_schema["$defs"]}
 
@@ -362,8 +363,10 @@ def test_m2_expected_context_retrieved_chunk_rag_extractor_and_schema_parity() -
     with pytest.raises(ValidationError):
         RAGExtractorConfig.model_validate({"unknown_field": "x"})
 
-    # Parity check against specs/002-retrieval-rag-evaluation/contracts/schemas-v1.json
-    m2_schema_path = Path("specs/002-retrieval-rag-evaluation/contracts/schemas-v1.json")
+    # Parity check against M2 retrieval schema contract
+    m2_schema_path = (
+        Path(__file__).resolve().parents[1] / "contract" / "schemas" / "m2-schemas-v1.json"
+    )
     m2_schema: dict[str, Any] = json.loads(m2_schema_path.read_text(encoding="utf-8"))
     m2_defs = m2_schema["$defs"]
 

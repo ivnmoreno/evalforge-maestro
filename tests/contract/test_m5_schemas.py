@@ -29,16 +29,17 @@ from evalforge_maestro.types import (
 
 
 def _merged_m5_schema() -> tuple[dict[str, Any], dict[str, Any]]:
+    schemas_dir = Path(__file__).resolve().parent / "schemas"
     defs: dict[str, Any] = {}
     m5: dict[str, Any] = {}
-    for rel_path in (
-        "specs/001-evaluation-foundation/contracts/schemas-v1.json",
-        "specs/002-retrieval-rag-evaluation/contracts/schemas-v1.json",
-        "specs/003-experiment-regression-engine/contracts/schemas-v1.json",
-        "specs/004-judge-calibration-engine/contracts/schemas-v1.json",
-        "specs/005-cli-reporting-ci/contracts/schemas-v1.json",
+    for filename in (
+        "m1-schemas-v1.json",
+        "m2-schemas-v1.json",
+        "m3-schemas-v1.json",
+        "m4-schemas-v1.json",
+        "m5-schemas-v1.json",
     ):
-        doc = json.loads(Path(rel_path).read_text(encoding="utf-8"))
+        doc = json.loads((schemas_dir / filename).read_text(encoding="utf-8"))
         defs.update(doc["$defs"])
         m5 = doc
     merged = {"$schema": "https://json-schema.org/draft/2020-12/schema", "$defs": defs}

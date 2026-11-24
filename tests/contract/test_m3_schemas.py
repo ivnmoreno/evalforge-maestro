@@ -32,21 +32,10 @@ from evalforge_maestro.types import (
 
 
 def _merged_m3_schema() -> tuple[dict[str, Any], dict[str, Any]]:
-    m1 = json.loads(
-        Path("specs/001-evaluation-foundation/contracts/schemas-v1.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    m2 = json.loads(
-        Path("specs/002-retrieval-rag-evaluation/contracts/schemas-v1.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    m3 = json.loads(
-        Path("specs/003-experiment-regression-engine/contracts/schemas-v1.json").read_text(
-            encoding="utf-8"
-        )
-    )
+    schemas_dir = Path(__file__).resolve().parent / "schemas"
+    m1 = json.loads((schemas_dir / "m1-schemas-v1.json").read_text(encoding="utf-8"))
+    m2 = json.loads((schemas_dir / "m2-schemas-v1.json").read_text(encoding="utf-8"))
+    m3 = json.loads((schemas_dir / "m3-schemas-v1.json").read_text(encoding="utf-8"))
     defs = {**m1["$defs"], **m2["$defs"], **m3["$defs"]}
     return m3, defs
 
