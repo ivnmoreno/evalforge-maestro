@@ -16,6 +16,7 @@ Before proposing a major feature or refactor, please open an issue so we can ali
 2. **Library Purity & Cold-Start Isolation**: Core library packages (`types`, `datasets`, `execution`, `storage`, `metrics`, `judges`, `embeddings`, `regression`, `reporting`) must never import CLI modules, read `evalforge.toml`/`.env` files directly, or eagerly import optional dependencies (`litellm`, `docpipe_maestro`, `numpy`, `scipy`, `sqlite3`, `http.server`). Enforced by [`tests/test_library_purity.py`](tests/test_library_purity.py).
 3. **Single Schema Source & API Stability**: All Pydantic v2 data contracts live in [`src/evalforge_maestro/types.py`](src/evalforge_maestro/types.py). Preserve backward compatibility for persisted `.evalforge/` artifacts and pinned public exports in [`tests/test_api_stability.py`](tests/test_api_stability.py).
 4. **Hermetic Offline Tests**: Unit, contract, and integration tests must run offline without live network requests or ambient `EVALFORGE_*`/provider environment variables.
+5. **Formal Assurance & Runtime Independence**: The standalone Lean 4 workspace (`formal/`) is a development- and CI-time verification layer only—never add Lean imports, subprocess calls, or package dependencies to `src/evalforge_maestro/` or `pyproject.toml`, and keep `/formal` excluded from built wheels and `sdist` archives (see [`docs/formal-assurance.md`](docs/formal-assurance.md)).
 
 ---
 
@@ -89,6 +90,26 @@ uv run pytest --strict-markers -W error \
 # Mandatory determinism and immutability release gates
 uv run pytest --strict-markers -W error -m "gate_determinism or gate_immutability"
 ```
+
+### Optional: Lean 4 Formal Assurance Checks (When Editing `formal/` or `QualityGate`)
+
+Python-only contributors do **not** need Lean installed—standard `uv run pytest` automatically runs offline Quality Gate conformance tests against the CI-verified golden oracle artifact (`tests/conformance/golden/quality_gate_oracle.json`).
+
+If you modify `formal/`, `tests/conformance/`, or `QualityGate` decision logic, install [`elan`](https://lean-lang.org/install/) (which reads the pinned toolchain in `formal/lean-toolchain`) and run the same checks enforced by the `formal-assurance` CI job:
+
+```bash
+# Compile Lean specifications, 22 proofs, compile-time core-axiom audit, and oracle executable
+(cd formal && lake build && lake env leanchecker EvalForgeFormal)
+
+# Verify sorryAx and custom axiom rejection probes
+bash formal/scripts/verify_negative_probes.sh
+
+# Verify byte parity with the golden artifact and run fail-closed live-oracle conformance
+./formal/.lake/build/bin/evalforge-gate-oracle export-golden | diff -u tests/conformance/golden/quality_gate_oracle.json -
+uv run pytest --strict-markers -W error --lean-live-oracle tests/conformance/
+```
+
+See [`docs/formal-assurance.md`](docs/formal-assurance.md) for the complete theorem inventory and explicit verification boundaries.
 
 ---
 

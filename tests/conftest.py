@@ -10,6 +10,23 @@ from typing import Any
 
 import pytest
 
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register CLI flags for optional fail-closed live Lean 4 oracle conformance testing."""
+    parser.addoption(
+        "--lean-live-oracle",
+        action="store_true",
+        default=False,
+        help="Run Python-to-Lean conformance checks fail-closed against the compiled Lean oracle.",
+    )
+    parser.addoption(
+        "--lean-oracle-bin",
+        action="store",
+        default="formal/.lake/build/bin/evalforge-gate-oracle",
+        help="Path to the compiled evalforge-gate-oracle executable used with --lean-live-oracle.",
+    )
+
+
 _SENSITIVE_ENV_EXACT: tuple[str, ...] = (
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",

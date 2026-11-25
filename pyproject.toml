@@ -74,6 +74,9 @@ fallback-version = "0.1.0.dev0"
 [tool.hatch.build.targets.wheel]
 packages = ["src/evalforge_maestro"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["/formal"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
