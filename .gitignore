@@ -41,6 +41,9 @@ coverage.xml
 # Lean 4 Lake build cache (standalone formal verification workspace)
 formal/.lake/
 
+# Local agent transcripts
+agy-logs/
+
 # Logs & temporary files
 *.log
 *.tmp
