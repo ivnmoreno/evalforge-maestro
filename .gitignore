@@ -38,6 +38,9 @@ coverage.xml
 # EvalForge Maestro local runtime artifacts (runs, tmp journals, manifest)
 .evalforge/
 
+# Lean 4 Lake build cache (standalone formal verification workspace)
+formal/.lake/
+
 # Logs & temporary files
 *.log
 *.tmp
