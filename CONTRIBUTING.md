@@ -91,21 +91,22 @@ uv run pytest --strict-markers -W error \
 uv run pytest --strict-markers -W error -m "gate_determinism or gate_immutability"
 ```
 
-### Optional: Lean 4 Formal Assurance Checks (When Editing `formal/` or `QualityGate`)
+### Optional: Lean 4 Formal Assurance Checks (When Editing `formal/`, `QualityGate`, or Retrieval IR Metrics)
 
-Python-only contributors do **not** need Lean installed—standard `uv run pytest` automatically runs offline Quality Gate conformance tests against the CI-verified golden oracle artifact (`tests/conformance/golden/quality_gate_oracle.json`).
+Python-only contributors do **not** need Lean installed—standard `uv run pytest` automatically runs offline Quality Gate and Retrieval conformance tests against the CI-verified golden oracle artifacts (`tests/conformance/golden/quality_gate_oracle.json` and `tests/conformance/golden/retrieval_metrics_oracle.json`).
 
-If you modify `formal/`, `tests/conformance/`, or `QualityGate` decision logic, install [`elan`](https://lean-lang.org/install/) (which reads the pinned toolchain in `formal/lean-toolchain`) and run the same checks enforced by the `formal-assurance` CI job:
+If you modify `formal/`, `tests/conformance/`, `QualityGate` decision logic, or deterministic IR retrieval metrics, install [`elan`](https://lean-lang.org/install/) (which reads the pinned toolchain in `formal/lean-toolchain`) and run the same checks enforced by the `formal-assurance` CI job:
 
 ```bash
-# Compile Lean specifications, 22 proofs, compile-time core-axiom audit, and oracle executable
+# Compile Lean specifications, 58 proofs, compile-time core-axiom audit, and both oracle executables
 (cd formal && lake build && lake env leanchecker EvalForgeFormal)
 
 # Verify sorryAx and custom axiom rejection probes
 bash formal/scripts/verify_negative_probes.sh
 
-# Verify byte parity with the golden artifact and run fail-closed live-oracle conformance
+# Verify byte parity with both golden artifacts and run fail-closed live-oracle conformance
 ./formal/.lake/build/bin/evalforge-gate-oracle export-golden | diff -u tests/conformance/golden/quality_gate_oracle.json -
+./formal/.lake/build/bin/evalforge-retrieval-oracle export-golden | diff -u tests/conformance/golden/retrieval_metrics_oracle.json -
 uv run pytest --strict-markers -W error --lean-live-oracle tests/conformance/
 ```
 

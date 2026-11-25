@@ -75,7 +75,7 @@ fallback-version = "0.1.0.dev0"
 packages = ["src/evalforge_maestro"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/formal"]
+exclude = ["/formal", "/agy-logs"]
 
 [tool.ruff]
 line-length = 100

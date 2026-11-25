@@ -115,6 +115,7 @@ jobs:
           import pathlib, tarfile, zipfile
 
           FORBIDDEN_NAMES = {"lean-toolchain", "lakefile.toml"}
+          FORBIDDEN_DIRS = {"formal", "agy-logs"}
 
           for whl in pathlib.Path("dist").glob("*.whl"):
               with zipfile.ZipFile(whl) as zf:
@@ -122,9 +123,13 @@ jobs:
                       n
                       for n in zf.namelist()
                       if (parts := pathlib.PurePosixPath(n).parts)
-                      and ("formal" in parts or n.endswith(".lean") or parts[-1] in FORBIDDEN_NAMES)
+                      and (
+                          bool(FORBIDDEN_DIRS.intersection(parts))
+                          or n.endswith(".lean")
+                          or parts[-1] in FORBIDDEN_NAMES
+                      )
                   ]
-                  assert not bad, f"Unexpected Lean files in wheel {whl}: {bad}"
+                  assert not bad, f"Unexpected forbidden files in wheel {whl}: {bad}"
 
           for sdist in pathlib.Path("dist").glob("*.tar.gz"):
               with tarfile.open(sdist, "r:gz") as tf:
@@ -133,15 +138,15 @@ jobs:
                       for m in tf.getmembers()
                       if (parts := pathlib.PurePosixPath(m.name).parts)
                       and (
-                          parts[0] == "formal"
-                          or (len(parts) >= 2 and parts[1] == "formal")
+                          parts[0] in FORBIDDEN_DIRS
+                          or (len(parts) >= 2 and parts[1] in FORBIDDEN_DIRS)
                           or m.name.endswith(".lean")
                           or parts[-1] in FORBIDDEN_NAMES
                       )
                   ]
-                  assert not bad, f"Unexpected Lean files in sdist {sdist}: {bad}"
+                  assert not bad, f"Unexpected forbidden files in sdist {sdist}: {bad}"
 
-          print("Verified zero Lean/formal files in wheel and sdist.")
+          print("Verified zero formal/ and zero agy-logs/ files in wheel and sdist.")
           PY
 
       - name: Verify clean minimal wheel install (--no-dev)

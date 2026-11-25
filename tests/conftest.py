@@ -25,6 +25,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default="formal/.lake/build/bin/evalforge-gate-oracle",
         help="Path to the compiled evalforge-gate-oracle executable used with --lean-live-oracle.",
     )
+    parser.addoption(
+        "--lean-retrieval-oracle-bin",
+        action="store",
+        default="formal/.lake/build/bin/evalforge-retrieval-oracle",
+        help=(
+            "Path to the compiled evalforge-retrieval-oracle executable used with "
+            "--lean-live-oracle."
+        ),
+    )
 
 
 _SENSITIVE_ENV_EXACT: tuple[str, ...] = (
