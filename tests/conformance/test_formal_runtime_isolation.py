@@ -15,14 +15,17 @@ else:  # pragma: no cover - Python 3.10 fallback
 
 from evalforge_maestro import (
     EvaluationCase,
+    ExactMatchMetric,
     ExecutionResult,
     HitRateAtKMetric,
+    HumanCalibrationSample,
     MRRMetric,
     NDCGAtKMetric,
     PrecisionAtKMetric,
     QualityGate,
     RecallAtKMetric,
     RetrievedChunk,
+    calibrate_judge,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -32,11 +35,15 @@ GOLDEN_ORACLE_PATH = Path(__file__).resolve().parent / "golden" / "quality_gate_
 GOLDEN_RETRIEVAL_ORACLE_PATH = (
     Path(__file__).resolve().parent / "golden" / "retrieval_metrics_oracle.json"
 )
+GOLDEN_CALIBRATION_ORACLE_PATH = (
+    Path(__file__).resolve().parent / "golden" / "judge_calibration_oracle.json"
+)
 FORBIDDEN_ARCHIVE_FILENAMES = frozenset({"lean-toolchain", "lakefile.toml"})
 FORBIDDEN_ARCHIVE_DIRS = frozenset({"formal", "agy-logs"})
 FORBIDDEN_RUNTIME_MARKERS = (
     "evalforge-gate-oracle",
     "evalforge-retrieval-oracle",
+    "evalforge-calibration-oracle",
     "lean-toolchain",
     "lakefile.toml",
 )
@@ -126,7 +133,7 @@ def test_segment_exact_archive_filter_allows_docs_and_blocks_formal_and_agy_logs
 
 
 def test_offline_golden_artifacts_and_runtime_metrics_work_without_lean() -> None:
-    """Confirm `QualityGate`, all 5 IR metrics, and both golden fixtures work purely offline."""
+    """Confirm `QualityGate`, IR metrics, calibration, and golden fixtures work offline."""
     assert QualityGate().policy.max_inconclusive_rate == 0.1
     gate_golden = json.loads(GOLDEN_ORACLE_PATH.read_text(encoding="utf-8"))
     assert gate_golden["schema_version"] == "1.0"
@@ -135,6 +142,10 @@ def test_offline_golden_artifacts_and_runtime_metrics_work_without_lean() -> Non
     retrieval_golden = json.loads(GOLDEN_RETRIEVAL_ORACLE_PATH.read_text(encoding="utf-8"))
     assert retrieval_golden["schema_version"] == "1.0"
     assert len(retrieval_golden["canonical_vectors"]) >= 16
+
+    calibration_golden = json.loads(GOLDEN_CALIBRATION_ORACLE_PATH.read_text(encoding="utf-8"))
+    assert calibration_golden["schema_version"] == "1.0"
+    assert len(calibration_golden["canonical_vectors"]) == 16
 
     case = EvaluationCase(id="offline-1", input="q", expected_context=["d1"])
     execution = ExecutionResult(
@@ -151,3 +162,17 @@ def test_offline_golden_artifacts_and_runtime_metrics_work_without_lean() -> Non
         NDCGAtKMetric(k=1),
     ):
         assert metric.evaluate(case, execution).score == 1.0
+
+    cal_report = calibrate_judge(
+        ExactMatchMetric(),
+        [
+            HumanCalibrationSample(
+                case_id="cal-off-1",
+                input="q",
+                output="ok",
+                reference="ok",
+                human_passed=True,
+            )
+        ],
+    )
+    assert cal_report.exact_agreement_rate == 100.0

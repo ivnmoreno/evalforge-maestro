@@ -3,7 +3,7 @@
 **Project:** EvalForge Maestro  
 **Capability:** Formal Assurance Layer  
 **Technology:** Lean 4  
-**Status:** Active Architectural Extension (Increment 1 — Quality Gate Decision Semantics & Increment 2 — Retrieval IR Metric Invariants Shipped)  
+**Status:** Active Architectural Extension (Increment 1 — Quality Gate Decision Semantics, Increment 2 — Retrieval IR Metric Invariants & Increment 3 — Judge Calibration & Threshold Optimization Shipped)  
 **Parent Charter:** [`intent.md`](intent.md)  
 **Implementation Guide:** [`formal-assurance.md`](formal-assurance.md)  
 **Primary Objective:** Machine-checked formal specifications of selected EvalForge correctness and decision-making properties.
@@ -79,10 +79,10 @@ No claim of complete Python implementation verification may be made without an i
 
 ## 5. Future Extensions
 
-The following areas are candidates for subsequent formalization (with Candidate #1 delivered in Increment 2):
+The following areas are candidates for subsequent formalization (with Candidates #1–#2 delivered in Increments 2–3):
 
 1. Retrieval metric invariants and mathematical bounds *(Shipped in Increment 2 — see [`docs/formal-assurance.md`](formal-assurance.md))*.
-2. Judge calibration and threshold optimization.
+2. Judge calibration and threshold optimization *(Shipped in Increment 3 — see [`docs/formal-assurance.md`](formal-assurance.md))*.
 3. Statistical methodology, including paired and Welch comparisons.
 4. Numerical approximation and floating-point error analysis.
 5. Additional domain contracts where formal verification provides measurable assurance.
