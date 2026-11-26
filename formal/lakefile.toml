@@ -1,6 +1,6 @@
 name = "evalforge_formal"
 version = "0.1.0"
-defaultTargets = ["EvalForgeFormal", "EvalForgeAudit", "evalforge-gate-oracle", "evalforge-retrieval-oracle", "evalforge-calibration-oracle", "evalforge-stats-oracle", "evalforge-agent-oracle"]
+defaultTargets = ["EvalForgeFormal", "EvalForgeAudit", "evalforge-gate-oracle", "evalforge-retrieval-oracle", "evalforge-calibration-oracle", "evalforge-stats-oracle", "evalforge-agent-oracle", "evalforge-regression-oracle"]
 
 [[lean_lib]]
 name = "EvalForgeFormal"
@@ -27,3 +27,7 @@ root = "StatsOracleMain"
 [[lean_exe]]
 name = "evalforge-agent-oracle"
 root = "AgentOracleMain"
+
+[[lean_exe]]
+name = "evalforge-regression-oracle"
+root = "RegressionOracleMain"
