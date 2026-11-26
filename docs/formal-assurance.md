@@ -1,6 +1,6 @@
-# Formal Assurance Layer Guide (`Lean 4` — Quality Gate, Retrieval IR, Judge Calibration & Statistical Inference)
+# Formal Assurance Layer Guide (`Lean 4` — Quality Gate, Retrieval IR, Judge Calibration, Statistical Inference & Agent Trace Metrics)
 
-EvalForge Maestro includes an independent, development-time and CI-time **Formal Assurance Layer** written in **Lean 4** (`formal/`), implementing Increment 1 (**Quality Gate Decision Semantics**), Increment 2 (**Retrieval IR Metric Invariants & Bounds**), Increment 3 (**Judge Calibration & Threshold Optimization**), and Increment 4 (**Statistical Inference & Regression Significance Semantics**) of the architectural charter in [`docs/formal-assurance-intent.md`](formal-assurance-intent.md). It formally specifies and proves core mathematical invariants over EvalForge's release-acceptance gate (`src/evalforge_maestro/regression/gate.py`, `src/evalforge_maestro/types.py`), deterministic Information Retrieval metrics (`src/evalforge_maestro/metrics/retrieval.py`), judge calibration engine (`src/evalforge_maestro/judges/calibration.py`), and statistical regression inference engine (`src/evalforge_maestro/regression/stats.py`, `src/evalforge_maestro/regression/compare.py`), paired with dual-mode empirical Python-to-Lean conformance testing.
+EvalForge Maestro includes an independent, development-time and CI-time **Formal Assurance Layer** written in **Lean 4** (`formal/`), implementing Increment 1 (**Quality Gate Decision Semantics**), Increment 2 (**Retrieval IR Metric Invariants & Bounds**), Increment 3 (**Judge Calibration & Threshold Optimization**), Increment 4 (**Statistical Inference & Regression Significance Semantics**), and Increment 5 (**Deterministic Agent Trace & Tool-Use Metrics**) of the architectural charter in [`docs/formal-assurance-intent.md`](formal-assurance-intent.md). It formally specifies and proves core mathematical invariants over EvalForge's release-acceptance gate (`src/evalforge_maestro/regression/gate.py`, `src/evalforge_maestro/types.py`), deterministic Information Retrieval metrics (`src/evalforge_maestro/metrics/retrieval.py`), judge calibration engine (`src/evalforge_maestro/judges/calibration.py`), statistical regression inference engine (`src/evalforge_maestro/regression/stats.py`, `src/evalforge_maestro/regression/compare.py`), and all six deterministic agent trace metrics (`src/evalforge_maestro/metrics/agent.py`, `src/evalforge_maestro/metrics/deterministic.py`), paired with dual-mode empirical Python-to-Lean conformance testing.
 
 Python remains the sole production implementation and runtime language of `evalforge-maestro`. End users installing `evalforge-maestro` from PyPI or running the SDK/CLI **never require Lean, Lake, or Elan**.
 
@@ -10,7 +10,7 @@ Python remains the sole production implementation and runtime language of `evalf
 
 - **Standalone Lean 4 project**: `formal/` (pinned to `leanprover/lean4:v4.36.0` in [`formal/lean-toolchain`](../formal/lean-toolchain), pure Lean 4 core standard library `Init` with zero external Lean package dependencies in [`formal/lakefile.toml`](../formal/lakefile.toml)).
 - **Excluded from Python distributions**: `pyproject.toml` excludes `/formal` and `/agy-logs` from both built wheels (`[tool.hatch.build.targets.wheel]`) and PyPI source distributions (`[tool.hatch.build.targets.sdist]`), enforced in CI and release pipelines.
-- **Authoritative Python runtime**: `src/evalforge_maestro/` is strictly unmodified (including AST-pinned `src/evalforge_maestro/metrics/retrieval.py`) and contains zero Lean imports, FFI bindings, Lean RPC/service processes, or subprocess calls.
+- **Authoritative Python runtime**: `src/evalforge_maestro/` is strictly unmodified (including AST-pinned `src/evalforge_maestro/metrics/retrieval.py` and `src/evalforge_maestro/metrics/agent.py`) and contains zero Lean imports, FFI bindings, Lean RPC/service processes, or subprocess calls.
 - **Modeled Increment 1 — Quality Gate Decision Semantics (`EvalForgeFormal.QualityGate`)**:
   1. **`GateDecision` domain & total precedence** (`formal/EvalForgeFormal/QualityGate/Decision.lean`): four-state inductive type (`pass`, `warning`, `inconclusive`, `fail`) ordered strictly by `pass < warning < inconclusive < fail` (`FAIL > INCONCLUSIVE > WARNING > PASS`), mirroring `evalforge_maestro.types.GateDecision`.
   2. **`_RuleRecorder` check partitioning** (`formal/EvalForgeFormal/QualityGate/RuleRecorder.lean`): models `RuleCheck`, `ReasonState`, `recordCheck`, and `recordChecks`, mirroring `_RuleRecorder.add` in `src/evalforge_maestro/regression/gate.py`.
@@ -29,12 +29,16 @@ Python remains the sole production implementation and runtime language of `evalf
   1. **Exact-rational statistical algebra** (`formal/EvalForgeFormal/Stats/ExactAlgebra.lean`): extends `NNRat` and `SignedRat` with ordered comparisons, exact arithmetic, `[-1, 1]` clamping (`sClampUnit`), sqrt-free squared deviations (`sSqNNRat`), unbiased sample variance (`sampleVarNNRat`, `sampleVarSigned`), pooled variance (`pooledVarNNRat`), and exact rational Welch–Satterthwaite degrees of freedom (`welchSatterthwaiteDf`).
   2. **Statistical domain contracts & abstract distribution oracle** (`formal/EvalForgeFormal/Stats/Types.lean`): `StatisticalMethod`, `SignificanceStatus`, `EffectSign`, `EffectSizeSpec` (sqrt-free availability, squared magnitude, and sign), `TwoTailedOracle` (symmetric two-tailed `pValue ∈ [0, 1]`, zero-delta `p = 1`, sign invariance, and `margin ≥ 0`), `InferenceInput`, `StatisticalOutcome`, `CohortRoute`, `SharedCaseScores`, and `AlignedPairExtraction`.
   3. **Inference state machine, method builders & gate bridge** (`formal/EvalForgeFormal/Stats/Inference.lean`): mirrors `_finalize_inference` (`finalizeInferenceWith` / `finalizeInferenceDirect`), `compute_paired_case_statistics`, `compute_welch_run_statistics`, `compute_one_sample_run_statistics`, `compare_run_cohorts` method dispatch (`dispatchCohortMethod`), `_extract_aligned_case_pairs` (`extractAlignedPairs`), and `QualityGate` statistical-regression escalation (`statisticalRegressionCheck`, `evaluateMetricSignificanceChecks`).
+- **Modeled Increment 5 — Deterministic Agent Trace & Tool-Use Metrics (`EvalForgeFormal.Agent`)**:
+  1. **Agent trace domain & boundary contracts** (`formal/EvalForgeFormal/Agent/Types.lean`): pure-`Init` encodings of `ToolCallStatus` (with `isFailure`), `TraceStepKind`, `AgentMetricStatus`, `ArgumentMatchMode`, `ToolSelectionMode`, `SequenceMode`, `ExpectedTool`, `ToolCall` (carrying pre-normalized `nameLower`, `canonicalSig`, and `argBlobLower`), `TraceStep`, `AgentCriteria`, `SchemaOracle : Nat → Nat → Bool`, and `AgentMetricOutcome`.
+  2. **Shared preparation, threshold precedence & substring helpers** (`formal/EvalForgeFormal/Agent/Preparation.lean`): mirrors `_resolve_threshold` (`metric_thresholds > pass_threshold > default_threshold`), `finalizeAgentMetric`, `_prepare_agent_inputs` (ID-deduplicated merging of top-level calls, nested trace `tool_calls`, and standalone `TOOL_CALL` steps plus `TOOL_RESULT` enrichment), `_ordered_expected_tools` (stable `(order ?? len, idx)` `List.mergeSort`), pure list-based `containsSubstr`, and order-independent argument map checks.
+  3. **Exact-rational evaluators for all six agent metrics** (`formal/EvalForgeFormal/Agent/Metrics.lean`): exact evaluators for `tool_selection` (`f1`, `recall`, `exact_set`), `argument_correctness` (strict/subset argument matching + abstract `SchemaOracle` + greedy one-to-one consumption), `execution_sequence` (`subsequence`, `prefix`, `exact`), `tool_efficiency` (step/call budget ratios + sequential failing-signature loop penalty), `policy_compliance` (zero-tolerance blocked/forbidden/pattern scan), and `failure_recovery` (chronological tool/trace failure recovery fraction).
 
 ---
 
-## 2. Machine-Checked Theorem Inventory (`126` Audited Theorems)
+## 2. Machine-Checked Theorem Inventory (`164` Audited Theorems)
 
-All **126** mandatory theorems (`22` Quality Gate + `36` Retrieval + `32` Calibration + `36` Statistical Inference) are audited at compile time by [`formal/EvalForgeAudit.lean`](../formal/EvalForgeAudit.lean) using `Lean.collectAxioms` to depend **only** on Lean's standard core axioms `{propext, Classical.choice, Quot.sound}` (strictly rejecting `sorryAx`, `Lean.ofReduceBool`, `Lean.trustCompiler`, and any user-declared `axiom`).
+All **164** mandatory theorems (`22` Quality Gate + `36` Retrieval + `32` Calibration + `36` Statistical Inference + `38` Agent Trace Metrics) are audited at compile time by [`formal/EvalForgeAudit.lean`](../formal/EvalForgeAudit.lean) using `Lean.collectAxioms` to depend **only** on Lean's standard core axioms `{propext, Classical.choice, Quot.sound}` (strictly rejecting `sorryAx`, `Lean.ofReduceBool`, `Lean.trustCompiler`, and any user-declared `axiom`).
 
 ### 2.1 Quality Gate Theorems (`22` — [`formal/EvalForgeFormal/QualityGate/Properties.lean`](../formal/EvalForgeFormal/QualityGate/Properties.lean))
 
@@ -182,6 +186,49 @@ All **126** mandatory theorems (`22` Quality Gate + `36` Retrieval + `32` Calibr
 | **Dispatch, Pairs & Gate Bridge** | `statisticalRegressionCheck_sound` | Per-metric rule check emits `FAIL` iff `SIGNIFICANT_REGRESSION ∧ failFlag`, `WARNING` iff `SIGNIFICANT_REGRESSION ∧ ¬failFlag`, `PASS` otherwise, never `INCONCLUSIVE` |
 | **Dispatch, Pairs & Gate Bridge** | `evaluateMetricSignificanceChecks_gate_bridge` | End-to-end `QualityGate` bridge proving only `SIGNIFICANT_REGRESSION` escalates gate outcomes |
 
+### 2.5 Deterministic Agent Trace & Tool-Use Metrics Theorems (`38` — [`formal/EvalForgeFormal/Agent/Properties.lean`](../formal/EvalForgeFormal/Agent/Properties.lean))
+
+| Group | Lean Theorem (`EvalForgeFormal.Agent.*`) | Machine-Checked Property |
+| --- | --- | --- |
+| **Guard Precedence & Thresholds** | `resolveThreshold_metric_override` | `metric_thresholds[metric_id]` takes top precedence over `pass_threshold` and default |
+| **Guard Precedence & Thresholds** | `resolveThreshold_pass_fallback` | `pass_threshold` overrides default when no per-metric override exists |
+| **Guard Precedence & Thresholds** | `resolveThreshold_default_fallback` | Metric default threshold applies when neither case override is configured |
+| **Guard Precedence & Thresholds** | `evaluate_errors_inconclusive_all_six` | `errors ≠ []` forces `INCONCLUSIVE` (`score = none`) across all six metrics ahead of `NOT_APPLICABLE` |
+| **Guard Precedence & Thresholds** | `finalizeAgentMetric_pass_fail_sound` | Numeric `PASS ↔ threshold ≤ score`, `FAIL ↔ score < threshold`, preserving `some score` |
+| **Preparation & Ordering** | `prepareAgentInputs_id_dedup_unique` | Duplicate-free top-level IDs remain strictly `Nodup` across trace merging and enrichment |
+| **Preparation & Ordering** | `prepareAgentInputs_enrichment_preserves_length` | `TOOL_RESULT` enrichment preserves call count, call IDs, and call names verbatim |
+| **Preparation & Ordering** | `orderedExpectedTools_perm_and_length` | `_ordered_expected_tools` preserves exact expectation multiset (`Perm`) and length |
+| **Preparation & Ordering** | `orderedExpectedTools_pairwise_sorted` | Indexed expected tools are always pairwise sorted by `(order ?? len, idx)` |
+| **`tool_selection`** | `toolSelection_bounds` | `0 ≤ score ≤ 1` universally across `f1`, `recall`, and `exact_set` |
+| **`tool_selection`** | `toolSelection_f1_eq_harmonic_mean` | For `tp > 0`, exact `2·tp / (|req| + tp + fp)` equals `2·P·R / (P + R)` |
+| **`tool_selection`** | `toolSelection_mode_hierarchy` | `exact_set ≤ precision`, `exact_set ≤ recall`, `exact_set ≤ f1`, and `min(P, R) ≤ f1 ≤ max(P, R)` |
+| **`tool_selection`** | `toolSelection_exactSet_eq_one_iff` | `exact_set ≈ 1 ↔ f1 ≈ 1 ↔ missing = 0 ∧ fp = 0` |
+| **`tool_selection`** | `toolSelection_optional_non_penalizing` | Invoking an optional expected tool never penalizes or changes any mode score |
+| **`tool_selection`** | `toolSelection_order_and_dup_invariant` | Scores depend solely on the set of called tool names (order- and duplicate-invariant) |
+| **`argument_correctness`** | `scoreSingleCallArgs_bounds` | `_score_single_call_args` always scores in `[0, 1]` |
+| **`argument_correctness`** | `scoreSingleCallArgs_parse_error_zero` | Any `argument_parse_error` immediately forces single-call score `0` |
+| **`argument_correctness`** | `scoreSingleCallArgs_strict_le_subset` | `strict_mode = true` never exceeds `strict_mode = false` on any call |
+| **`argument_correctness`** | `argumentCorrectness_bounds_and_usage_cap` | Greedy matching yields `used.Nodup`, `|used| ≤ min(|constrained|, |calls|)`, and `0 ≤ score ≤ 1` |
+| **`execution_sequence`** | `executionSequence_bounds` | `0 ≤ score ≤ 1` universally across `exact`, `prefix`, and `subsequence` |
+| **`execution_sequence`** | `executionSequence_mode_hierarchy` | Strict mode hierarchy `exact ≤ prefix ≤ subsequence` |
+| **`execution_sequence`** | `executionSequence_exact_match_one` | Exact sequence equality yields `1` across all three modes |
+| **`execution_sequence`** | `executionSequence_suffix_mono` | Appending suffix calls never decreases `prefix` or `subsequence` scores |
+| **`tool_efficiency`** | `toolEfficiency_bounds` | `0 ≤ score ≤ 1` universally |
+| **`tool_efficiency`** | `toolEfficiency_budget_compliant_one` | Budget- and repeat-compliant traces achieve exact score `1` |
+| **`tool_efficiency`** | `toolEfficiency_anti_mono_usage` | Higher step/call counts, redundant loops, or stricter `loop_penalty` never increase score |
+| **`tool_efficiency`** | `toolEfficiency_mono_budgets` | Relaxing step/call budgets or `allow_redundant_failures` never decreases score |
+| **`tool_efficiency`** | `countRedundantLoops_single_retry_immunity` | Distinct failing signatures and single-retry recoveries incur `0` redundant loops |
+| **`policy_compliance`** | `policyCompliance_binary` | Strict binary codomain `{0, 1}` |
+| **`policy_compliance`** | `policyCompliance_zero_tolerance_iff` | `score = 1 ↔` zero violations and `score = 0 ↔` at least one violation |
+| **`policy_compliance`** | `policyCompliance_constraint_anti_mono` | Expanding forbidden tool or argument pattern lists never increases score |
+| **`policy_compliance`** | `policyCompliance_violation_irreversible` | Appending compliant calls or trace steps cannot restore compliance after a violation |
+| **`failure_recovery`** | `failureRecovery_notApplicable_iff` | Clean traces return `NOT_APPLICABLE` (`score = none`) iff zero failure events exist |
+| **`failure_recovery`** | `failureRecovery_bounds` | Whenever `some score` is emitted, `0 ≤ score ≤ 1` |
+| **`failure_recovery`** | `failureRecovery_eq_one_iff_success_after_last_failure` | `score ≈ 1 ↔` a `SUCCESS` occurs strictly after the last failure event |
+| **`failure_recovery`** | `failureRecovery_eq_zero_iff_no_success_after_first_failure` | `score ≈ 0 ↔` no `SUCCESS` occurs strictly after the first failure event |
+| **`failure_recovery`** | `failureRecovery_trailing_failure_lt_one` | Any timeline ending in a failure strictly satisfies `score < 1` |
+| **`failure_recovery`** | `failureRecovery_append_success_achieves_one` | Appending a terminal `SUCCESS` to any timeline with `≥ 1` failure achieves `score ≈ 1` |
+
 ---
 
 ## 3. Building & Verifying the Lean 4 Project Locally
@@ -189,7 +236,7 @@ All **126** mandatory theorems (`22` Quality Gate + `36` Retrieval + `32` Calibr
 Install [`elan`](https://lean-lang.org/install/) (which automatically reads `formal/lean-toolchain` pinned to `leanprover/lean4:v4.36.0`), then run:
 
 ```bash
-# 1. Compile EvalForgeFormal, compile-time EvalForgeAudit (126 theorems), and all 4 oracle binaries
+# 1. Compile EvalForgeFormal, compile-time EvalForgeAudit (164 theorems), and all 5 oracle binaries
 cd formal
 lake build
 
@@ -212,11 +259,12 @@ Python conformance tests live in:
 - [`tests/conformance/test_retrieval_metrics_formal_conformance.py`](../tests/conformance/test_retrieval_metrics_formal_conformance.py) (Retrieval IR metric conformance)
 - [`tests/conformance/test_judge_calibration_formal_conformance.py`](../tests/conformance/test_judge_calibration_formal_conformance.py) (Judge Calibration & threshold optimization conformance)
 - [`tests/conformance/test_statistical_inference_formal_conformance.py`](../tests/conformance/test_statistical_inference_formal_conformance.py) (Statistical Inference, cohort dispatch, aligned pairs & gate bridge conformance)
+- [`tests/conformance/test_agent_metrics_formal_conformance.py`](../tests/conformance/test_agent_metrics_formal_conformance.py) (Deterministic Agent Trace & Tool-Use Metrics conformance)
 - [`tests/conformance/test_formal_runtime_isolation.py`](../tests/conformance/test_formal_runtime_isolation.py) (Runtime & wheel/`sdist` isolation)
 
 ### Mode A: Offline Golden Artifact Mode (Default — Zero Lean Installation Required)
 
-Standard `pytest` runs compare real Python `QualityGate`, IR metric, Judge Calibration (`calibrate_judge`, `acalibrate_judge`, `_optimize_pass_threshold`), and Statistical Inference (`compute_paired_case_statistics`, `compute_welch_run_statistics`, `compute_one_sample_run_statistics`, `_finalize_inference`, `_extract_aligned_case_pairs`, `compare_run_cohorts`, `QualityGate` statistical escalation) outputs against the CI-verified golden oracle fixtures ([`quality_gate_oracle.json`](../tests/conformance/golden/quality_gate_oracle.json), [`retrieval_metrics_oracle.json`](../tests/conformance/golden/retrieval_metrics_oracle.json), [`judge_calibration_oracle.json`](../tests/conformance/golden/judge_calibration_oracle.json), and [`statistical_inference_oracle.json`](../tests/conformance/golden/statistical_inference_oracle.json)):
+Standard `pytest` runs compare real Python `QualityGate`, IR metric, Judge Calibration (`calibrate_judge`, `acalibrate_judge`, `_optimize_pass_threshold`), Statistical Inference (`compute_paired_case_statistics`, `compute_welch_run_statistics`, `compute_one_sample_run_statistics`, `_finalize_inference`, `_extract_aligned_case_pairs`, `compare_run_cohorts`, `QualityGate` statistical escalation), and Agent Trace Metric (`ToolSelectionMetric`, `ArgumentCorrectnessMetric`, `ExecutionSequenceMetric`, `ToolEfficiencyMetric`, `PolicyComplianceMetric`, `FailureRecoveryMetric`, `_prepare_agent_inputs`, `_resolve_threshold`) outputs against the CI-verified golden oracle fixtures ([`quality_gate_oracle.json`](../tests/conformance/golden/quality_gate_oracle.json), [`retrieval_metrics_oracle.json`](../tests/conformance/golden/retrieval_metrics_oracle.json), [`judge_calibration_oracle.json`](../tests/conformance/golden/judge_calibration_oracle.json), [`statistical_inference_oracle.json`](../tests/conformance/golden/statistical_inference_oracle.json), and [`agent_metrics_oracle.json`](../tests/conformance/golden/agent_metrics_oracle.json)):
 
 ```bash
 uv run pytest --strict-markers -W error tests/conformance/
@@ -224,16 +272,17 @@ uv run pytest --strict-markers -W error tests/conformance/
 
 ### Mode B: Fail-Closed Live Lean Oracle Mode (Mandatory in CI & Release)
 
-After `cd formal && lake build`, execute conformance tests directly against all four compiled Lean binaries (`evalforge-gate-oracle`, `evalforge-retrieval-oracle`, `evalforge-calibration-oracle`, and `evalforge-stats-oracle`):
+After `cd formal && lake build`, execute conformance tests directly against all five compiled Lean binaries (`evalforge-gate-oracle`, `evalforge-retrieval-oracle`, `evalforge-calibration-oracle`, `evalforge-stats-oracle`, and `evalforge-agent-oracle`):
 
 ```bash
-# Verify byte-for-byte deterministic parity for all 4 golden oracle fixtures
+# Verify byte-for-byte deterministic parity for all 5 golden oracle fixtures
 ./formal/.lake/build/bin/evalforge-gate-oracle export-golden | diff -u tests/conformance/golden/quality_gate_oracle.json -
 ./formal/.lake/build/bin/evalforge-retrieval-oracle export-golden | diff -u tests/conformance/golden/retrieval_metrics_oracle.json -
 ./formal/.lake/build/bin/evalforge-calibration-oracle export-golden | diff -u tests/conformance/golden/judge_calibration_oracle.json -
 ./formal/.lake/build/bin/evalforge-stats-oracle export-golden | diff -u tests/conformance/golden/statistical_inference_oracle.json -
+./formal/.lake/build/bin/evalforge-agent-oracle export-golden | diff -u tests/conformance/golden/agent_metrics_oracle.json -
 
-# Run fail-closed live-oracle conformance across all 4 suites
+# Run fail-closed live-oracle conformance across all 5 suites
 uv run pytest --strict-markers -W error --lean-live-oracle tests/conformance/
 ```
 
@@ -242,9 +291,9 @@ uv run pytest --strict-markers -W error --lean-live-oracle tests/conformance/
 ## 5. CI & Release Enforcement
 
 Both PR CI (`.github/workflows/ci.yml`, job `formal-assurance`) and tag-driven release verification (`.github/workflows/release.yml`, job `formal-assurance-gate` blocking `publish-testpypi`) run on `ubuntu-latest` independently of the Python lint/unit jobs:
-1. `leanprover/lean-action@v1` builds `formal/` (enforcing compile-time `EvalForgeAudit.lean` across all 126 theorems and compiling all four oracles) and runs `leanchecker EvalForgeFormal`.
+1. `leanprover/lean-action@v1` builds `formal/` (enforcing compile-time `EvalForgeAudit.lean` across all 164 theorems and compiling all five oracles) and runs `leanchecker EvalForgeFormal`.
 2. `bash formal/scripts/verify_negative_probes.sh` confirms `sorry` and custom `axiom` declarations fail verification.
-3. Explicit `diff -u` parity checks and `uv run pytest --strict-markers -W error --lean-live-oracle tests/conformance/` verify golden artifact byte parity and evaluate all exercised Quality Gate, Retrieval, Judge Calibration, and Statistical Inference Python scenarios live against `evalforge-gate-oracle`, `evalforge-retrieval-oracle`, `evalforge-calibration-oracle`, and `evalforge-stats-oracle`.
+3. Explicit `diff -u` parity checks and `uv run pytest --strict-markers -W error --lean-live-oracle tests/conformance/` verify golden artifact byte parity and evaluate all exercised Quality Gate, Retrieval, Judge Calibration, Statistical Inference, and Agent Trace Metric Python scenarios live against `evalforge-gate-oracle`, `evalforge-retrieval-oracle`, `evalforge-calibration-oracle`, `evalforge-stats-oracle`, and `evalforge-agent-oracle`.
 
 Meanwhile, `cross-os-and-packaging` (`ubuntu-latest`, `macos-latest`, `windows-latest`) and `verify-and-build` verify offline conformance without Lean installed and assert that built `.whl` and `.tar.gz` (`sdist`) archives contain zero `formal/`, `agy-logs/`, `.lean`, `lean-toolchain`, or `lakefile.toml` entries.
 
@@ -253,16 +302,17 @@ Meanwhile, `cross-os-and-packaging` (`ubuntu-latest`, `macos-latest`, `windows-l
 ## 6. Explicit Verification Boundaries (What Is and Is Not Guaranteed)
 
 ### What machine-checked Lean 4 proofs establish
-- The 126 mathematical properties listed in Section 2 hold **universally for all possible inputs** of the **Lean 4 formal models** (`EvalForgeFormal.QualityGate`, `EvalForgeFormal.Retrieval`, `EvalForgeFormal.Calibration`, and `EvalForgeFormal.Stats`), verified mechanically by Lean's kernel under at most `{propext, Classical.choice, Quot.sound}`.
+- The 164 mathematical properties listed in Section 2 hold **universally for all possible inputs** of the **Lean 4 formal models** (`EvalForgeFormal.QualityGate`, `EvalForgeFormal.Retrieval`, `EvalForgeFormal.Calibration`, `EvalForgeFormal.Stats`, and `EvalForgeFormal.Agent`), verified mechanically by Lean's kernel under at most `{propext, Classical.choice, Quot.sound}`.
 
 ### What Python conformance tests establish
-- **Empirical agreement** between the actual Python implementations (`QualityGate.evaluate()`, `QualityGate.evaluate_cohort()`, `_RuleRecorder`, all 5 IR metrics + `_prepare_retrieval_inputs`, `calibrate_judge()` / `acalibrate_judge()` / `_optimize_pass_threshold()`, and `compute_paired_case_statistics()` / `compute_welch_run_statistics()` / `compute_one_sample_run_statistics()` / `_finalize_inference()` / `_extract_aligned_case_pairs()` / `compare_run_cohorts()`) and the proved Lean reference models across all exercised truth-table states, canonical vectors, cutoff/threshold sweeps, sample permutations, baseline/candidate swaps, tie-breaking scenarios, CI clamping extremes, policy escalations, and negative drift probes.
+- **Empirical agreement** between the actual Python implementations (`QualityGate.evaluate()`, `QualityGate.evaluate_cohort()`, `_RuleRecorder`, all 5 IR metrics + `_prepare_retrieval_inputs`, `calibrate_judge()` / `acalibrate_judge()` / `_optimize_pass_threshold()`, `compute_paired_case_statistics()` / `compute_welch_run_statistics()` / `compute_one_sample_run_statistics()` / `_finalize_inference()` / `_extract_aligned_case_pairs()` / `compare_run_cohorts()`, and all 6 deterministic agent metrics + `_prepare_agent_inputs()` + `_resolve_threshold()`) and the proved Lean reference models across all exercised truth-table states, canonical vectors, cutoff/threshold sweeps, mode hierarchies, sample/call permutations, baseline/candidate swaps, trace extensions, tie-breaking scenarios, CI clamping extremes, policy escalations, and negative drift probes.
 
 ### What is NOT established or claimed
 - **The Python implementation itself is NOT formally verified.** Neither CPython, Pydantic v2 validation, nor the Python source code of `src/evalforge_maestro/` is proved by Lean's kernel.
-- **IEEE-754 floating-point arithmetic, epsilon tolerances, transcendental routines, and decimal quantization are NOT formally verified.**
+- **IEEE-754 floating-point arithmetic, epsilon tolerances, transcendental routines, external JSON/Unicode libraries, and decimal quantization are NOT formally verified.**
   - `NDCG@K` bounds and monotonicity are proved universally in Lean over any abstract strictly positive non-increasing rational `DiscountSchedule`; Python's IEEE-754 `math.log2(idx + 1)` approximation is checked empirically in conformance tests rather than proved in Lean.
   - Statistical inference classification, CI clamping/ordering, and swap duality are proved universally in Lean over any abstract symmetric `TwoTailedOracle` (`pValue ∈ [0, 1]`, zero-delta `p = 1`, sign-invariance, `margin ≥ 0`); Python's transcendental numerical routines (`_betacf`, `regularized_incomplete_beta`, `math.lgamma`, `math.sqrt`, and 72-step bisection `student_t_critical`) remain empirically tested in [`tests/unit/test_statistical_compare.py`](../tests/unit/test_statistical_compare.py) and conformance suites rather than proved in Lean.
+  - Agent `argument_correctness`, `tool_efficiency`, and `policy_compliance` theorems are proved universally in Lean over an abstract `SchemaOracle : Nat → Nat → Bool` and pre-normalized boundary strings (`canonicalSig`, `nameLower`, `argBlobLower`); Python's `jsonschema.validate` Draft validation engine, `canonical_json_str` serialization, Unicode `.casefold()` normalization, and 6-decimal `round_score` quantization remain empirically verified in [`tests/unit/test_agent_metrics.py`](../tests/unit/test_agent_metrics.py) and conformance tests rather than proved in Lean.
   - Python's `FLOAT_EPSILON = 1e-9` boundary tolerances in `calibration.py` and `stats.py` (`standard_error <= FLOAT_EPSILON`, `abs(mean_delta) <= FLOAT_EPSILON`, `p_val < alpha - FLOAT_EPSILON`) and decimal rounding (`round_score` to 6 decimals, `round_percentage` to 2 decimals, `round_delta` to 6 decimals) are checked empirically in conformance tests rather than proved in Lean; exact-rational theorems apply to unrounded `NNRat` / `SignedRat` comparisons.
 - **Pre-evaluation validation, async concurrency, and provenance hashing sit outside the formal models**: `ConfigurationError` guards in `QualityGate` and `calibration.py`, `EmptyDatasetError` / `DuplicateCaseIdError`, `MetricError` init guards, `ValueError` cardinality/domain guards in `stats.py`, `EvaluationCase` / `MetricResult` / `StatisticalSummary` Pydantic validators, `_evaluate_samples` async/thread-pool orchestration, and SHA-256 provenance fingerprinting (`_resolve_judge_provenance`) remain verified by Python unit and contract tests.
-- **Deferred EvalForge subsystems remain outside Increments 1–4**: deterministic text/JSON/agent metrics (`metrics/deterministic.py`, `metrics/agent.py`), floating-point error analysis, storage atomicity, OpenTelemetry ingestion, SQLite indexing, HTTP routing, and CLI argument parsing remain deferred (see [`docs/future-features.md`](future-features.md)).
+- **Deferred EvalForge subsystems remain outside Increments 1–5**: deterministic text/JSON metrics (`metrics/deterministic.py`), floating-point error analysis, storage atomicity, OpenTelemetry ingestion, SQLite indexing, HTTP routing, and CLI argument parsing remain deferred (see [`docs/future-features.md`](future-features.md)).
