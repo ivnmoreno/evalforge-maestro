@@ -70,3 +70,11 @@ Inspect **`StatisticalSummary.mean_delta`**, the **`[ci_low, ci_high]`** interva
 | `confidence_level` (`--confidence-level`) | `0.95` | Sets two-tailed CI width and hypothesis threshold $\alpha = 1 - \text{confidence\_level}$. |
 | `min_statistical_samples` (`--min-statistical-samples`) | `2` | Minimum sample count before emitting significance rather than `INSUFFICIENT_DATA`. |
 | `fail_on_significant_regression` (`--fail-on-significant-regression`) | `False` | When `False`, `statistical_regression:<metric_id>` emits non-blocking `WARNING`; set `True` to escalate statistically significant regressions to `FAIL` (note: there is no separate `min_effect_size` filter—pair this flag with `max_regression_drop` and adequate `--repeats`). |
+
+---
+
+## 6. Formal Assurance & Verification Boundaries
+
+Core exact-rational properties of EvalForge's statistical inference model—paired mean linearity, unbiased variance non-negativity and permutation invariance, Welch–Satterthwaite degrees-of-freedom bounds ($\min(k-1, m-1) \le \text{df}_{\text{Welch}} \le k+m-2$, positivity, symmetry, and scale invariance), `_finalize_inference` four-state classification and guard dominance, zero-variance trichotomy, clamped confidence interval ordering ($-1 \le \text{ci\_low} \le \text{mean\_delta} \le \text{ci\_high} \le 1$), baseline/candidate swap antisymmetry, cohort dispatch partitioning, aligned case-pair conservation, and `QualityGate` statistical-regression escalation—are machine-checked in Lean 4 (`EvalForgeFormal.Stats`, `36` audited theorems) and empirically cross-checked against Python via dual-mode conformance testing (`tests/conformance/test_statistical_inference_formal_conformance.py`).
+
+Transcendental floating-point numerical routines (`_betacf`, `regularized_incomplete_beta`, `math.lgamma`, `math.sqrt`, and 72-step bisection `student_t_critical`), `FLOAT_EPSILON = 1e-9` guard tolerances, and 6-decimal rounding remain verified empirically in Python unit and conformance tests rather than proved in Lean. See [`docs/formal-assurance.md`](formal-assurance.md) for the complete theorem inventory and verification commands.

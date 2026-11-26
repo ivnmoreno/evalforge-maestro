@@ -43,6 +43,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "--lean-live-oracle."
         ),
     )
+    parser.addoption(
+        "--lean-stats-oracle-bin",
+        action="store",
+        default="formal/.lake/build/bin/evalforge-stats-oracle",
+        help=(
+            "Path to the compiled evalforge-stats-oracle executable used with --lean-live-oracle."
+        ),
+    )
 
 
 _SENSITIVE_ENV_EXACT: tuple[str, ...] = (

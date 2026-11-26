@@ -12,3 +12,7 @@ import EvalForgeFormal.Calibration.Types
 import EvalForgeFormal.Calibration.ThresholdOptimizer
 import EvalForgeFormal.Calibration.Aggregation
 import EvalForgeFormal.Calibration.Properties
+import EvalForgeFormal.Stats.ExactAlgebra
+import EvalForgeFormal.Stats.Types
+import EvalForgeFormal.Stats.Inference
+import EvalForgeFormal.Stats.Properties

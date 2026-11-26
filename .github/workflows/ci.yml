@@ -374,4 +374,8 @@ jobs:
       - name: Sync locked dev environment and run fail-closed live Lean conformance suite
         run: |
           uv sync --frozen --extra dev
+          ./formal/.lake/build/bin/evalforge-gate-oracle export-golden | diff -u tests/conformance/golden/quality_gate_oracle.json -
+          ./formal/.lake/build/bin/evalforge-retrieval-oracle export-golden | diff -u tests/conformance/golden/retrieval_metrics_oracle.json -
+          ./formal/.lake/build/bin/evalforge-calibration-oracle export-golden | diff -u tests/conformance/golden/judge_calibration_oracle.json -
+          ./formal/.lake/build/bin/evalforge-stats-oracle export-golden | diff -u tests/conformance/golden/statistical_inference_oracle.json -
           uv run pytest --strict-markers -W error --lean-live-oracle tests/conformance/
