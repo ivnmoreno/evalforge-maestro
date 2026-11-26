@@ -1,6 +1,6 @@
 name = "evalforge_formal"
 version = "0.1.0"
-defaultTargets = ["EvalForgeFormal", "EvalForgeAudit", "evalforge-gate-oracle", "evalforge-retrieval-oracle", "evalforge-calibration-oracle"]
+defaultTargets = ["EvalForgeFormal", "EvalForgeAudit", "evalforge-gate-oracle", "evalforge-retrieval-oracle", "evalforge-calibration-oracle", "evalforge-stats-oracle"]
 
 [[lean_lib]]
 name = "EvalForgeFormal"
@@ -19,3 +19,7 @@ root = "RetrievalOracleMain"
 [[lean_exe]]
 name = "evalforge-calibration-oracle"
 root = "CalibrationOracleMain"
+
+[[lean_exe]]
+name = "evalforge-stats-oracle"
+root = "StatsOracleMain"

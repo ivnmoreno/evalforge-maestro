@@ -22,6 +22,10 @@ from evalforge_maestro import (
     RetrievedChunk,
     calibrate_judge,
 )
+from evalforge_maestro.regression.stats import (
+    compute_paired_case_statistics,
+    compute_welch_run_statistics,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
@@ -33,12 +37,16 @@ GOLDEN_RETRIEVAL_ORACLE_PATH = (
 GOLDEN_CALIBRATION_ORACLE_PATH = (
     Path(__file__).resolve().parent / "golden" / "judge_calibration_oracle.json"
 )
+GOLDEN_STATS_ORACLE_PATH = (
+    Path(__file__).resolve().parent / "golden" / "statistical_inference_oracle.json"
+)
 FORBIDDEN_ARCHIVE_FILENAMES = frozenset({"lean-toolchain", "lakefile.toml"})
 FORBIDDEN_ARCHIVE_DIRS = frozenset({"formal", "agy-logs"})
 FORBIDDEN_RUNTIME_MARKERS = (
     "evalforge-gate-oracle",
     "evalforge-retrieval-oracle",
     "evalforge-calibration-oracle",
+    "evalforge-stats-oracle",
     "lean-toolchain",
     "lakefile.toml",
 )
@@ -142,6 +150,12 @@ def test_offline_golden_artifacts_and_runtime_metrics_work_without_lean() -> Non
     assert calibration_golden["schema_version"] == "1.0"
     assert len(calibration_golden["canonical_vectors"]) == 16
 
+    stats_golden = json.loads(GOLDEN_STATS_ORACLE_PATH.read_text(encoding="utf-8"))
+    assert stats_golden["schema_version"] == "1.0"
+    assert len(stats_golden["canonical_vectors"]) == 18
+    assert len(stats_golden["cohort_dispatch_matrix"]) == 16
+    assert len(stats_golden["gate_escalation_truth_table"]) == 8
+
     case = EvaluationCase(id="offline-1", input="q", expected_context=["d1"])
     execution = ExecutionResult(
         case_id="offline-1",
@@ -171,3 +185,8 @@ def test_offline_golden_artifacts_and_runtime_metrics_work_without_lean() -> Non
         ],
     )
     assert cal_report.exact_agreement_rate == 100.0
+
+    paired_res = compute_paired_case_statistics([0.8, 0.9, 0.7], [0.5, 0.6, 0.4])
+    assert paired_res.statistically_significant is True
+    welch_res = compute_welch_run_statistics([0.9, 0.9, 0.9], [0.5, 0.52, 0.51])
+    assert welch_res.degrees_of_freedom == 2.0

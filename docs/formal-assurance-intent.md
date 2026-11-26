@@ -79,11 +79,11 @@ No claim of complete Python implementation verification may be made without an i
 
 ## 5. Future Extensions
 
-The following areas are candidates for subsequent formalization (with Candidates #1–#2 delivered in Increments 2–3):
+The following areas are candidates for subsequent formalization (with Candidates #1–#3 delivered in Increments 2–4):
 
 1. Retrieval metric invariants and mathematical bounds *(Shipped in Increment 2 — see [`docs/formal-assurance.md`](formal-assurance.md))*.
 2. Judge calibration and threshold optimization *(Shipped in Increment 3 — see [`docs/formal-assurance.md`](formal-assurance.md))*.
-3. Statistical methodology, including paired and Welch comparisons.
+3. Statistical methodology, including paired and Welch comparisons *(Shipped in Increment 4 — see [`docs/formal-assurance.md`](formal-assurance.md))*.
 4. Numerical approximation and floating-point error analysis.
 5. Additional domain contracts where formal verification provides measurable assurance.
 
