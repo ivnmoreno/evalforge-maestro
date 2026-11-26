@@ -59,6 +59,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "Path to the compiled evalforge-agent-oracle executable used with --lean-live-oracle."
         ),
     )
+    parser.addoption(
+        "--lean-regression-oracle-bin",
+        action="store",
+        default="formal/.lake/build/bin/evalforge-regression-oracle",
+        help=(
+            "Path to the compiled evalforge-regression-oracle executable used with "
+            "--lean-live-oracle."
+        ),
+    )
 
 
 _SENSITIVE_ENV_EXACT: tuple[str, ...] = (

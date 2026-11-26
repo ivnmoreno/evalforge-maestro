@@ -20,3 +20,8 @@ import EvalForgeFormal.Agent.Types
 import EvalForgeFormal.Agent.Preparation
 import EvalForgeFormal.Agent.Metrics
 import EvalForgeFormal.Agent.Properties
+import EvalForgeFormal.Regression.Types
+import EvalForgeFormal.Regression.Anomaly
+import EvalForgeFormal.Regression.Drift
+import EvalForgeFormal.Regression.Trend
+import EvalForgeFormal.Regression.Properties

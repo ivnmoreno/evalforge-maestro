@@ -3,7 +3,7 @@
 **Project:** EvalForge Maestro  
 **Capability:** Formal Assurance Layer  
 **Technology:** Lean 4  
-**Status:** Active Architectural Extension (Increments 1–5 Shipped: Quality Gate, Retrieval IR Metrics, Judge Calibration, Statistical Inference & Deterministic Agent Trace Metrics)  
+**Status:** Active Architectural Extension (Increments 1–6 Shipped: Quality Gate, Retrieval IR Metrics, Judge Calibration, Statistical Inference, Deterministic Agent Trace Metrics & Regression Analytics — 100% of `src/evalforge_maestro/regression/`)  
 **Parent Charter:** [`intent.md`](intent.md)  
 **Implementation Guide:** [`formal-assurance.md`](formal-assurance.md)  
 **Primary Objective:** Machine-checked formal specifications of selected EvalForge correctness and decision-making properties.
@@ -79,14 +79,15 @@ No claim of complete Python implementation verification may be made without an i
 
 ## 5. Future Extensions
 
-The following areas are candidates for subsequent formalization (with Candidates #1–#3 plus deterministic agent trace metrics delivered in Increments 2–5):
+The following areas are candidates for subsequent formalization (with Candidates #1–#5 delivered in Increments 2–6):
 
 1. Retrieval metric invariants and mathematical bounds *(Shipped in Increment 2 — see [`docs/formal-assurance.md`](formal-assurance.md))*.
 2. Judge calibration and threshold optimization *(Shipped in Increment 3 — see [`docs/formal-assurance.md`](formal-assurance.md))*.
 3. Statistical methodology, including paired and Welch comparisons *(Shipped in Increment 4 — see [`docs/formal-assurance.md`](formal-assurance.md))*.
 4. Deterministic agent trace & tool-use metrics *(Shipped in Increment 5 — see [`docs/formal-assurance.md`](formal-assurance.md))*.
-5. Numerical approximation and floating-point error analysis.
-6. Additional domain contracts where formal verification provides measurable assurance.
+5. Anti-masking anomaly detection, sliding-window OLS trend analysis & provenance/cohort drift *(Shipped in Increment 6 — completing 100% formal assurance coverage of `src/evalforge_maestro/regression/`, see [`docs/formal-assurance.md`](formal-assurance.md))*.
+6. Numerical approximation and floating-point error analysis.
+7. Additional domain contracts where formal verification provides measurable assurance.
 
 Each extension requires its own requirements, feasibility assessment, and acceptance criteria.
 

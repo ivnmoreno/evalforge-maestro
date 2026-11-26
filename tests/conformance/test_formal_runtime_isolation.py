@@ -5,11 +5,14 @@ from __future__ import annotations
 import ast
 import json
 import tomllib
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from evalforge_maestro import (
+    AggregateMetricSummary,
     ArgumentCorrectnessMetric,
+    CaseEvaluationRecord,
     EvaluationCase,
     ExactMatchMetric,
     ExecutionResult,
@@ -18,6 +21,8 @@ from evalforge_maestro import (
     FailureRecoveryMetric,
     HitRateAtKMetric,
     HumanCalibrationSample,
+    MetricResult,
+    MetricStatus,
     MRRMetric,
     NDCGAtKMetric,
     PolicyComplianceMetric,
@@ -25,10 +30,16 @@ from evalforge_maestro import (
     QualityGate,
     RecallAtKMetric,
     RetrievedChunk,
+    RunManifestEntry,
+    RunRecord,
     ToolCallRecord,
     ToolEfficiencyMetric,
     ToolSelectionMetric,
+    TrendDirection,
+    analyze_trend,
     calibrate_judge,
+    detect_anomalies,
+    detect_drift,
 )
 from evalforge_maestro.regression.stats import (
     compute_paired_case_statistics,
@@ -49,6 +60,9 @@ GOLDEN_STATS_ORACLE_PATH = (
     Path(__file__).resolve().parent / "golden" / "statistical_inference_oracle.json"
 )
 GOLDEN_AGENT_ORACLE_PATH = Path(__file__).resolve().parent / "golden" / "agent_metrics_oracle.json"
+GOLDEN_REGRESSION_ORACLE_PATH = (
+    Path(__file__).resolve().parent / "golden" / "regression_analytics_oracle.json"
+)
 FORBIDDEN_ARCHIVE_FILENAMES = frozenset({"lean-toolchain", "lakefile.toml"})
 FORBIDDEN_ARCHIVE_DIRS = frozenset({"formal", "agy-logs"})
 FORBIDDEN_RUNTIME_MARKERS = (
@@ -57,6 +71,7 @@ FORBIDDEN_RUNTIME_MARKERS = (
     "evalforge-calibration-oracle",
     "evalforge-stats-oracle",
     "evalforge-agent-oracle",
+    "evalforge-regression-oracle",
     "lean-toolchain",
     "lakefile.toml",
 )
@@ -171,6 +186,14 @@ def test_offline_golden_artifacts_and_runtime_metrics_work_without_lean() -> Non
     assert len(agent_golden["threshold_resolution_vectors"]) == 4
     assert len(agent_golden["canonical_vectors"]) == 20
 
+    regression_golden = json.loads(GOLDEN_REGRESSION_ORACLE_PATH.read_text(encoding="utf-8"))
+    assert regression_golden["schema_version"] == "1.0"
+    assert regression_golden["lean_toolchain"] == "leanprover/lean4:v4.36.0"
+    assert len(regression_golden["anomaly_vectors"]) == 8
+    assert len(regression_golden["trend_vectors"]) == 8
+    assert len(regression_golden["drift_pair_vectors"]) == 5
+    assert len(regression_golden["drift_cohort_vectors"]) == 4
+
     case = EvaluationCase(id="offline-1", input="q", expected_context=["d1"])
     execution = ExecutionResult(
         case_id="offline-1",
@@ -223,3 +246,55 @@ def test_offline_golden_artifacts_and_runtime_metrics_work_without_lean() -> Non
     assert ToolEfficiencyMetric().evaluate(agent_case, agent_exec).score == 1.0
     assert PolicyComplianceMetric().evaluate(agent_case, agent_exec).score == 1.0
     assert FailureRecoveryMetric().evaluate(agent_case, agent_exec).score is None
+
+    smoke_run = RunRecord(
+        run_id="offline-reg-1",
+        timestamp=datetime(2026, 11, 20, 12, 0, tzinfo=UTC),
+        package_version="0.3.0",
+        dataset_id="ds-smoke",
+        dataset_fingerprint="a" * 64,
+        evaluated_case_count=1,
+        metric_versions={"exact_match": "1.0.0"},
+        aggregates={
+            "exact_match": AggregateMetricSummary(
+                metric_id="exact_match",
+                metric_version="1.0.0",
+                mean_score=1.0,
+                applicable_count=1,
+                pass_count=1,
+                fail_count=0,
+                warning_count=0,
+                inconclusive_count=0,
+                not_applicable_count=0,
+            )
+        },
+        status_counts={MetricStatus.PASS: 1},
+        case_results=[
+            CaseEvaluationRecord(
+                case_id="c1",
+                execution=ExecutionResult(
+                    case_id="c1", input="q", output="a", elapsed_seconds=0.01
+                ),
+                metrics={
+                    "exact_match": MetricResult(
+                        metric_id="exact_match",
+                        metric_version="1.0.0",
+                        score=1.0,
+                        status=MetricStatus.PASS,
+                        explanation="ok",
+                    )
+                },
+            )
+        ],
+    )
+    assert detect_anomalies(smoke_run) == []
+    assert detect_drift(smoke_run, smoke_run) == []
+    m1 = RunManifestEntry.from_run_record(smoke_run)
+    m2 = m1.model_copy(
+        update={
+            "run_id": "offline-reg-2",
+            "timestamp": datetime(2026, 11, 20, 13, 0, tzinfo=UTC),
+        }
+    )
+    trend_res = analyze_trend([m1, m2], window=2)
+    assert trend_res.metrics["exact_match"].direction == TrendDirection.STABLE
