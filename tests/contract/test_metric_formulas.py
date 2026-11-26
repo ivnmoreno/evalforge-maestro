@@ -51,7 +51,7 @@ from evalforge_maestro.metrics.retrieval import (
 )
 from evalforge_maestro.types import Metric
 
-# Pinned SHA-256 hashes of normalized ASTs (docstrings stripped, Python 3.10-3.13 invariant).
+# Pinned SHA-256 hashes of normalized ASTs (docstrings stripped, Python 3.11-3.13 invariant).
 # Any modification to deterministic scoring logic MUST bump the corresponding metric_version.
 EXPECTED_FORMULA_AST_HASHES: dict[tuple[str, str], str] = {
     ("exact_match", "1.0.0"): ("4fdac336567ac2a403c118070b97aa43917798e5fda6ca1b7005de8ed6ab92ea"),

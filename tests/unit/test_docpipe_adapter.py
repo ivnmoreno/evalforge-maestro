@@ -526,3 +526,48 @@ def test_docpipe_adapter_runs_concurrent_live_retrieve_and_guards_local_only(
     legacy_res = asyncio.run(legacy_adapter.execute(EvaluationCase(id="leg-1", input="hello")))
     assert legacy_res.errors == []
     assert legacy_res.output == "legacy-ok"
+
+
+def test_docpipe_adapter_0_5_0_hybrid_rerank_and_answer_detailed_contract(
+    tmp_path: Path,
+) -> None:
+    """Verify DocpipeAdapter contract for docpipe-maestro>=0.5.0 hybrid+rerank options."""
+    client = _SimDocpipeClient()
+    persist_dir = tmp_path / "docpipe-chroma"
+    adapter = DocpipeAdapter(
+        mode="answer_detailed",
+        collection="docs",
+        persist_dir=persist_dir,
+        retrieve_kwargs={
+            "top_k": 4,
+            "searcher": "fts5_hybrid",
+            "rerank": True,
+            "api_key": "dp-secret-token",
+        },
+        answer_kwargs={"model": "gpt-4o-mini", "api_key": "ans-secret-token"},
+        system_version="docpipe-maestro-0.5.0",
+        client=client,
+    )
+    res = asyncio.run(
+        adapter.execute(EvaluationCase(id="dp-050", input="How does hybrid reranking work?"))
+    )
+    assert res.errors == []
+    assert res.output == "Grounded docpipe answer"
+    assert res.system_version == "docpipe-maestro-0.5.0"
+    assert res.model_id == "gpt-4o-mini"
+    assert len(res.retrieved_chunks) == 2
+    assert res.tokens == TokenUsage(
+        prompt_tokens=30,
+        completion_tokens=12,
+        reasoning_tokens=2,
+        total_tokens=44,
+    )
+    _, ret_kwargs = client.retrieve_calls[0]
+    assert ret_kwargs["collection"] == "docs"
+    assert ret_kwargs["persist_dir"] == str(persist_dir)
+    assert ret_kwargs["top_k"] == 4
+    assert ret_kwargs["searcher"] == "fts5_hybrid"
+    assert ret_kwargs["rerank"] is True
+    assert "dp-secret-token" not in str(res.adapter_metadata)
+    assert "ans-secret-token" not in str(res.adapter_metadata)
+    assert "leaked-key" not in str(res.retrieved_chunks)

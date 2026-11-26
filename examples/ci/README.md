@@ -8,7 +8,7 @@ Drop-in configuration templates, sample datasets, calibration fixtures, and GitH
 | --- | --- | --- |
 | [`evalforge-ci.yml`](evalforge-ci.yml) | Pull-request workflow validating config, executing offline gate (`--mock --local-only --strict`), posting Markdown reports to `$GITHUB_STEP_SUMMARY`, and uploading JSON/Markdown artifacts. | Offline CI Gate |
 | [`evalforge.toml`](evalforge.toml) | Pre-recorded replay gate (`ReplayAdapter` via `--executions`) scoring `normalized_match`, `precision_at_k`, `recall_at_k`, and deterministic mock `groundedness`. | Mode A: Replay JSONL |
-| [`evalforge-docpipe.toml`](evalforge-docpipe.toml) | Direct `docpipe-maestro>=0.4.1` retrieval gate (`docpipe_mode = "retrieve"`, `docpipe_searcher = "fts5_hybrid"`) scoring `precision_at_k`, `recall_at_k`, and `mrr`. | Mode B: Live Docpipe |
+| [`evalforge-docpipe.toml`](evalforge-docpipe.toml) | Direct `docpipe-maestro>=0.5.0` retrieval gate (`docpipe_mode = "retrieve"`, `docpipe_searcher = "fts5_hybrid"`) scoring `precision_at_k`, `recall_at_k`, and `mrr`. | Mode B: Live Docpipe |
 | [`evalforge-otel.toml`](evalforge-otel.toml) | OpenTelemetry trace replay gate (`[run].otel_traces` + `[otel]`) scoring `normalized_match`, `precision_at_k`, `recall_at_k`, `tool_selection`, and `policy_compliance`. | Mode C: OTel Export |
 | [`evalforge-hybrid-rerank.toml`](evalforge-hybrid-rerank.toml) | Hybrid FTS5 + cross-encoder rerank retrieval & RAG quality gate scoring graded `ndcg_at_k`, `precision_at_k`, `recall_at_k`, `mrr`, `groundedness`, `answer_relevance`, and `context_relevance` (with documented live `[target] docpipe` swap-in). | Mode D: Hybrid + Rerank |
 | [`golden-sample.jsonl`](golden-sample.jsonl) | 3-case golden evaluation dataset (`ci-1` mandatory SLA, `ci-2` mandatory refunds, `ci-3` optional security). | Shared Fixture |
@@ -44,7 +44,7 @@ evalforge-maestro run \
 
 ### Mode B: Direct `DocpipeAdapter` Gate (`[docpipe-maestro]`)
 
-Recommended when evaluating a live `docpipe-maestro>=0.4.1` checkout or persistent vector index (`pip install "evalforge-maestro[docpipe-maestro]"`):
+Recommended when evaluating a live `docpipe-maestro>=0.5.0` checkout or persistent vector index (`pip install "evalforge-maestro[docpipe-maestro]"`):
 
 1. Copy [`evalforge-docpipe.toml`](evalforge-docpipe.toml) into your repository root (or `--config` path).
 2. Mount or populate the fixture Chroma/FTS index at `docpipe_persist_dir` for `docpipe_collection`.

@@ -2,12 +2,12 @@
 
 ## Supported Versions
 
-Security fixes are released for the latest minor release line:
+Security fixes are released for the latest minor release line (upcoming releases require **Python `>=3.11.5`**):
 
 | Version | Supported |
 | --- | --- |
-| `0.3.x` | Yes |
-| `< 0.3.0` | No |
+| `0.4.x`+ | Yes |
+| `< 0.4.0` | No |
 
 ---
 
@@ -41,6 +41,15 @@ EvalForge Maestro implements defense-in-depth safeguards designed for local, CI,
 - **Prompt-Injection Delimiting**: Model-based judges wrap untrusted target outputs and retrieved contexts inside randomized XML/nonce boundaries and validate structured JSON outputs strictly.
 - **Artifact Storage Permissions**: Canonical `.evalforge/` directories and run records use atomic writes with `0o700`/`0o600` POSIX permissions where supported by the OS.
 - **Optional HTTP Service (`evalforge-maestro serve`)**: Defaults to loopback (`127.0.0.1`), blocks non-loopback binding without a non-empty Bearer token (`EVALFORGE_SERVICE_TOKEN` / `--auth-token`, verified with `hmac.compare_digest`), enforces `local_only=True` by default, rejects oversized payloads (`HTTP 413`), and validates path identifiers against traversal.
+
+### Optional Extras & Transitive Dependency Isolation
+
+Core installation (`pip install evalforge-maestro`) depends strictly on `pydantic` and `jsonschema`. CI enforces `pip-audit --strict` with **zero known vulnerabilities** across core and development dependencies on every pull request and release tag.
+
+Optional capability extras (`[docpipe-maestro]`, `[judges]`, `[embeddings]`) are lazily imported and excluded from default installations:
+
+- **`[docpipe-maestro]` (`docpipe-maestro>=0.5.0`)**: Pulls vector-store transitive dependencies such as `chromadb` only when explicitly installed by downstream RAG users. Upstream-unpatched transitive advisories confined strictly to optional extras (for example, `chromadb==1.5.9` advisories pending upstream `chromadb` releases) do **not** affect core `evalforge-maestro` installs; EvalForge tracks upstream fixes rather than forking or vendoring third-party storage internals.
+- **`[judges]` & `[embeddings]`**: Pin direct lower bounds (`litellm>=1.108.0`) above known fixed advisories and remain completely unloaded during core CLI/SDK execution and offline `--mock` runs.
 
 ### Deployment & Threat-Model Exclusions
 

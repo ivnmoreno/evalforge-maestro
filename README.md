@@ -113,6 +113,8 @@ flowchart LR
 
 ## Installation
 
+> **Python Requirement (`>=3.11.5`)**: Requires **Python 3.11.5 or newer** (`3.11`–`3.13`). Support for end-of-life Python 3.10 has been dropped.
+
 Install core evaluation, deterministic/retrieval/agent metrics, offline replay, and zero-dependency OpenTelemetry ingestion:
 
 ```bash
