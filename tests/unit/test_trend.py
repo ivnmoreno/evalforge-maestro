@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -43,8 +43,7 @@ def _manifest(
     )
     return RunManifestEntry(
         run_id=run_id,
-        timestamp=datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
-        + timedelta(minutes=offset_minutes),
+        timestamp=datetime(2026, 11, 18, 12, 0, tzinfo=UTC) + timedelta(minutes=offset_minutes),
         package_version="0.3.0",
         dataset_id=dataset_id,
         dataset_fingerprint=dataset_fp,
@@ -106,7 +105,7 @@ def test_sliding_window_ols_slopes_and_default_dataset_scoping() -> None:
     run_records = [
         RunRecord(
             run_id=f"rec-{i}",
-            timestamp=datetime(2026, 11, 18, 12, i, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 11, 18, 12, i, tzinfo=UTC),
             package_version="0.3.0",
             dataset_id="ds-rec",
             dataset_fingerprint="a" * 64,

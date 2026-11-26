@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -71,7 +71,7 @@ def test_replay_adapter_supports_json_array_and_run_record(tmp_path: Path) -> No
 
     run_rec = RunRecord(
         run_id="run-replay-src",
-        timestamp=datetime(2026, 11, 19, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 19, tzinfo=UTC),
         package_version="0.1.0",
         dataset_id="ds-1",
         dataset_fingerprint="a" * 64,

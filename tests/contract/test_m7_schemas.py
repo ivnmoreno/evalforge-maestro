@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -71,7 +71,7 @@ def test_embedding_provenance_drift_category_and_legacy_1_0_compat() -> None:
     legacy_run_payload = {
         "schema_version": "1.0",
         "run_id": "legacy-r1",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "package_version": "0.2.0",
         "dataset_id": "ds-1",
         "dataset_fingerprint": "a" * 64,
@@ -102,7 +102,7 @@ def test_embedding_provenance_drift_category_and_legacy_1_0_compat() -> None:
             "schema_version": "1.0",
             "name": "legacy-base",
             "run_id": "legacy-r1",
-            "pinned_at": datetime.now(timezone.utc).isoformat(),
+            "pinned_at": datetime.now(UTC).isoformat(),
             "dataset_id": "ds-1",
             "dataset_fingerprint": "a" * 64,
             "metric_versions": {"exact_match": "1.0.0"},

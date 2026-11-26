@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from datetime import timezone
+from datetime import UTC
 
 from evalforge_maestro._canonical import FLOAT_EPSILON, round_delta, round_score
 from evalforge_maestro.exceptions import ConfigurationError
@@ -147,7 +147,7 @@ def analyze_trend(
 
     sorted_runs = sorted(
         runs,
-        key=lambda item: (item.timestamp.astimezone(timezone.utc), item.run_id),
+        key=lambda item: (item.timestamp.astimezone(UTC), item.run_id),
     )
 
     if dataset_id is not None:

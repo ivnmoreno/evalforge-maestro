@@ -84,7 +84,7 @@ Traditional deterministic software testing assumes that a fixed input yields an 
 * **Post-Release / Periodic Monitoring (Scheduled):** Executed periodically against fixed baselines and sliding run windows to detect upstream model provider drift.
 
 ### WHERE — Operating Context
-* **Execution Environment:** Runs as a single installable local Python package (`Python 3.10+`) within developer workstations, Linux environments, and containerized CI/CD runners.
+* **Execution Environment:** Runs as a single installable local Python package (`Python 3.11.5+`) within developer workstations, Linux environments, and containerized CI/CD runners.
 * **Architectural Boundary:** Operates strictly outside the target AI application's core runtime logic, communicating via explicit adapter contracts without requiring target systems to adopt specific frameworks (no forced dependency on LangChain, LlamaIndex, or LangGraph).
 
 ### WHY — Engineering and Portfolio Value

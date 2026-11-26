@@ -4,14 +4,9 @@ from __future__ import annotations
 
 import ast
 import json
-import sys
+import tomllib
 from pathlib import Path, PurePosixPath
 from typing import Any
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - Python 3.10 fallback
-    import tomli as tomllib
 
 from evalforge_maestro import (
     EvaluationCase,

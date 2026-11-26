@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from evalforge_maestro.regression.anomaly import detect_anomalies
 from evalforge_maestro.regression.compare import compare_runs
@@ -87,7 +87,7 @@ def _make_run(
 
     return RunRecord(
         run_id=run_id,
-        timestamp=datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 18, 12, 0, tzinfo=UTC),
         package_version="0.3.0",
         dataset_id="ds-1",
         dataset_fingerprint="a" * 64,

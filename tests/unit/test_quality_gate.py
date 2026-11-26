@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -98,7 +98,7 @@ def _run_fixture(
 
     return RunRecord(
         run_id=run_id,
-        timestamp=datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 18, 12, 0, tzinfo=UTC),
         package_version="0.3.0",
         dataset_id="ds-gate",
         dataset_fingerprint=dataset_fp,
@@ -153,7 +153,7 @@ def test_quality_gate_pass_not_applicable_safety_and_determinism() -> None:
         [
             RunManifestEntry(
                 run_id="t0",
-                timestamp=datetime(2026, 11, 18, 10, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 11, 18, 10, 0, tzinfo=UTC),
                 package_version="0.3.0",
                 dataset_id="ds-gate",
                 dataset_fingerprint="a" * 64,
@@ -164,7 +164,7 @@ def test_quality_gate_pass_not_applicable_safety_and_determinism() -> None:
             ),
             RunManifestEntry(
                 run_id="t1",
-                timestamp=datetime(2026, 11, 18, 11, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 11, 18, 11, 0, tzinfo=UTC),
                 package_version="0.3.0",
                 dataset_id="ds-gate",
                 dataset_fingerprint="a" * 64,
@@ -277,7 +277,7 @@ def test_quality_gate_inconclusive_branches_and_precedence_over_warning() -> Non
         [
             RunManifestEntry(
                 run_id="t0",
-                timestamp=datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 11, 18, 12, 0, tzinfo=UTC),
                 package_version="0.3.0",
                 dataset_id="ds-gate",
                 dataset_fingerprint="a" * 64,
@@ -391,7 +391,7 @@ def test_quality_gate_mandatory_drift_and_anomaly_gates_and_escalations() -> Non
         [
             RunManifestEntry(
                 run_id=f"t{i}",
-                timestamp=datetime(2026, 11, 18, 10, i, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 11, 18, 10, i, tzinfo=UTC),
                 package_version="0.3.0",
                 dataset_id="ds-gate",
                 dataset_fingerprint="a" * 64,

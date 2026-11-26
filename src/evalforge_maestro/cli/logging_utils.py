@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TextIO
 
 from evalforge_maestro._canonical import scrub_secret_text
@@ -23,7 +23,7 @@ class _SecretScrubbingFormatter(logging.Formatter):
             msg = f"{msg}\n{exc_text}"
         if self._json_mode:
             payload = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "level": record.levelname,
                 "logger": record.name,
                 "message": msg,

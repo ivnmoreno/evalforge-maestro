@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from evalforge_maestro._canonical import canonical_json_str, redact_secrets, scrub_secret_text
@@ -254,7 +254,7 @@ def build_run_report(
     return ReportDocument(
         report_kind=ReportKind.RUN,
         title=resolved_title,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
         evaluation=run,
         comparison=comparison,
         trend=trend,
@@ -288,7 +288,7 @@ def build_comparison_report(
     return ReportDocument(
         report_kind=ReportKind.COMPARE,
         title=resolved_title,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
         evaluation=candidate_run,
         comparison=comparison,
         gate=gate,
@@ -313,7 +313,7 @@ def build_trend_report(
     return ReportDocument(
         report_kind=ReportKind.TREND,
         title=resolved_title,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
         trend=trend,
         gate=gate,
         diagnostics=diagnostics,
@@ -368,7 +368,7 @@ def build_calibration_report(
     return ReportDocument(
         report_kind=ReportKind.CALIBRATE,
         title=resolved_title,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
         calibration=calibration,
         calibration_gate=cal_gate,
     )
