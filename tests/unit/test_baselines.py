@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -32,7 +32,7 @@ def _sha256_file(path: Path) -> str:
 def _sample_run(run_id: str, *, score: float = 0.9, judge_fp: str | None = None) -> RunRecord:
     return RunRecord(
         run_id=run_id,
-        timestamp=datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 18, 12, 0, tzinfo=UTC),
         package_version="0.3.0",
         dataset_id="ds-bench",
         dataset_version="1.0",
@@ -180,7 +180,7 @@ def test_baseline_validation_and_storage_errors(
         dataset_fingerprint="a" * 64,
         aggregate_scores={"m1": None, "m2": 0.5},
     )
-    assert entry.pinned_at.tzinfo == timezone.utc
+    assert entry.pinned_at.tzinfo == UTC
     with pytest.raises(ValidationError):
         BaselineRegistry(baselines={"wrong-key": entry})
 
@@ -194,7 +194,7 @@ def test_baseline_validation_and_storage_errors(
             BaselineEntry(
                 name="ok",
                 run_id="r",
-                pinned_at=datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc),
+                pinned_at=datetime(2026, 11, 18, 12, 0, tzinfo=UTC),
                 dataset_id="ds",
                 dataset_fingerprint="a" * 64,
                 aggregate_scores=bad_agg,  # type: ignore[arg-type]
@@ -203,7 +203,7 @@ def test_baseline_validation_and_storage_errors(
         BaselineEntry(
             name="bad..entry",
             run_id="r",
-            pinned_at=datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc),
+            pinned_at=datetime(2026, 11, 18, 12, 0, tzinfo=UTC),
             dataset_id="ds",
             dataset_fingerprint="a" * 64,
         )

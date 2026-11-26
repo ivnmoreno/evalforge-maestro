@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import stat
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -38,7 +38,7 @@ def _sample_run(run_id: str = "run-001") -> RunRecord:
     )
     return RunRecord(
         run_id=run_id,
-        timestamp=datetime(2026, 11, 18, 9, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 18, 9, 0, 0, tzinfo=UTC),
         package_version="0.1.0",
         dataset_id="ds-test",
         dataset_fingerprint="b" * 64,

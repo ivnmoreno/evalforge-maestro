@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -175,7 +175,7 @@ def test_us1_sqlite_rebuild_sync_corruption_and_immutability(tmp_path: Path) -> 
     assert idx.query_cases() == []
 
     # Persist canonical runs & baseline
-    t0 = datetime(2026, 11, 1, 10, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 11, 1, 10, 0, tzinfo=UTC)
     r1 = _make_run("run-01", ts=t0, exact_score=0.9, prec_score=0.8)
     r2 = _make_run(
         "run-02",
@@ -265,7 +265,7 @@ def test_us1_sqlite_rebuild_sync_corruption_and_immutability(tmp_path: Path) -> 
 def test_us2_sqlite_queries_filters_sqli_and_canonical_parity(tmp_path: Path) -> None:
     root = tmp_path / ".evalforge"
     store = LocalRunStore(root)
-    t0 = datetime(2026, 11, 10, 8, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 11, 10, 8, 0, tzinfo=UTC)
     runs = [
         _make_run(
             "r-alpha-1",

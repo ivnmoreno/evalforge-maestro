@@ -8,7 +8,7 @@ import os
 import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -396,7 +396,7 @@ class SQLiteRunIndex:
             "INSERT INTO baselines (baseline_name, run_id, pinned_at) VALUES (?, ?, ?)",
             baseline_rows,
         )
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         conn.executemany(
             "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)",
             [

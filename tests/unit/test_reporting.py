@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from evalforge_maestro.reporting import (
     build_calibration_report,
@@ -55,7 +55,7 @@ def _sample_run(*, include_secret: bool = False) -> RunRecord:
     out_b = "Paris Authorization: Bearer secret_leak_abc" if include_secret else "Wrong City"
     return RunRecord(
         run_id="run-m5-001",
-        timestamp=datetime(2026, 11, 19, 10, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 19, 10, 0, tzinfo=UTC),
         package_version="0.5.0",
         dataset_id="rag-bench",
         dataset_fingerprint="a" * 64,
@@ -312,7 +312,7 @@ def test_compare_trend_and_calibration_report_builders() -> None:
 def test_detect_decoupled_agent_trace_vs_answer_diagnostics_and_markdown() -> None:
     run = RunRecord(
         run_id="run-agent-decoupled",
-        timestamp=datetime(2026, 11, 20, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 20, tzinfo=UTC),
         package_version="0.2.0",
         dataset_id="agent-ds",
         dataset_fingerprint="d" * 64,

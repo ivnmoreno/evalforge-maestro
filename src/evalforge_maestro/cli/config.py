@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shlex
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -181,10 +180,7 @@ class _TomlRootConfig(_TomlStrictSection):
 
 
 def _load_toml_file(path: Path) -> tuple[dict[str, Any], _TomlRootConfig]:
-    if sys.version_info >= (3, 11):
-        import tomllib
-    else:  # pragma: no cover - Python 3.10 compatibility path
-        import tomli as tomllib
+    import tomllib
 
     try:
         raw_bytes = path.read_bytes()

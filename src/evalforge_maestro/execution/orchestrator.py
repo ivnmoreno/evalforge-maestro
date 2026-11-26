@@ -8,7 +8,7 @@ import sys
 import time
 import uuid
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
@@ -441,7 +441,7 @@ class EvaluationOrchestrator:
             return await adapter.execute(case)
         try:
             return await asyncio.wait_for(adapter.execute(case), timeout=timeout)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             elapsed = round_score(max(0.0, time.perf_counter() - start))
             return ExecutionResult(
                 case_id=case.id,
@@ -466,10 +466,7 @@ class EvaluationOrchestrator:
         resolved_run_id = (
             run_id
             if run_id is not None
-            else (
-                f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"
-                f"{uuid.uuid4().hex[:8]}"
-            )
+            else (f"run-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}")
         )
         store = LocalRunStore(self._storage_root)
         if store.run_path(resolved_run_id).exists():
@@ -626,7 +623,7 @@ class EvaluationOrchestrator:
 
         run_record = RunRecord(
             run_id=resolved_run_id,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             package_version=_package_version(),
             dataset_id=meta.dataset_id,
             dataset_version=meta.dataset_version,

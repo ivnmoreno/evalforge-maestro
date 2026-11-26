@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -96,7 +96,7 @@ def test_m5_runtime_models_validate_against_contract_schemas() -> None:
 
     run = RunRecord(
         run_id="run-schema-1",
-        timestamp=datetime(2026, 11, 19, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 19, tzinfo=UTC),
         package_version="0.5.0",
         dataset_id="ds-1",
         dataset_fingerprint="a" * 64,
@@ -140,7 +140,7 @@ def test_m5_runtime_models_validate_against_contract_schemas() -> None:
     entry = BaselineEntry(
         name="prod",
         run_id="run-schema-1",
-        pinned_at=datetime(2026, 11, 19, tzinfo=timezone.utc),
+        pinned_at=datetime(2026, 11, 19, tzinfo=UTC),
         dataset_id="ds-1",
         dataset_fingerprint="a" * 64,
         metric_versions={"exact_match": "1.0.0"},

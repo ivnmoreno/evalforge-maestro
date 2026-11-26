@@ -16,7 +16,7 @@ import copy
 import json
 import os
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -353,7 +353,7 @@ def _build_run(
 
     return RunRecord(
         run_id=run_id,
-        timestamp=datetime(2026, 11, 24, 12, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 24, 12, 0, tzinfo=UTC),
         package_version="0.3.0",
         dataset_id="ds-conformance",
         dataset_fingerprint=dataset_fp,
@@ -784,7 +784,7 @@ def test_boundary_escalation_and_cohort_conformance(request: pytest.FixtureReque
         [
             RunManifestEntry(
                 run_id=f"tr-{i}",
-                timestamp=datetime(2026, 11, 24, 10, i, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 11, 24, 10, i, tzinfo=UTC),
                 package_version="0.3.0",
                 dataset_id="ds-conformance",
                 dataset_fingerprint="a" * 64,

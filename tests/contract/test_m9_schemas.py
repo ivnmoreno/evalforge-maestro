@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -29,8 +29,8 @@ def test_m9_query_filter_validation_and_bounds() -> None:
         metric_id="exact_match",
         min_mean_score=0.5,
         max_mean_score=0.95,
-        since=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        until=datetime(2026, 12, 31, tzinfo=timezone.utc),
+        since=datetime(2026, 1, 1, tzinfo=UTC),
+        until=datetime(2026, 12, 31, tzinfo=UTC),
         order_by=RunSortOrder.TIMESTAMP_ASC,
         limit=25,
         offset=5,
@@ -46,8 +46,8 @@ def test_m9_query_filter_validation_and_bounds() -> None:
 
     with pytest.raises(ValidationError):
         RunQueryFilter(
-            since=datetime(2026, 5, 1, tzinfo=timezone.utc),
-            until=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            since=datetime(2026, 5, 1, tzinfo=UTC),
+            until=datetime(2026, 1, 1, tzinfo=UTC),
         )
 
     with pytest.raises(ValidationError):
@@ -99,7 +99,7 @@ def test_m9_result_status_and_payload_contracts() -> None:
         status_counts={MetricStatus.PASS: 10},
     )
     assert run_sum.schema_version == SCHEMA_VERSION
-    assert run_sum.timestamp.tzinfo == timezone.utc
+    assert run_sum.timestamp.tzinfo == UTC
     assert run_sum.aggregate_scores["exact_match"] == pytest.approx(0.912346)
 
     case_row = IndexedCaseMetricRow(

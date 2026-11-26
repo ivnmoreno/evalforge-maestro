@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -155,7 +155,7 @@ def test_m6_runtime_models_validate_against_contract_schemas() -> None:
 
     run = RunRecord(
         run_id="run-m6-1",
-        timestamp=datetime(2026, 11, 20, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 20, tzinfo=UTC),
         package_version="0.2.0",
         dataset_id="agent-ds",
         dataset_fingerprint="b" * 64,

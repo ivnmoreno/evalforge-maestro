@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +49,7 @@ def _validate(def_name: str, payload: Any) -> None:
 def _sample_run(run_id: str, score: float, minute: int) -> RunRecord:
     return RunRecord(
         run_id=run_id,
-        timestamp=datetime(2026, 11, 18, 12, minute, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 18, 12, minute, tzinfo=UTC),
         package_version="0.3.0",
         dataset_id="ds-main",
         dataset_version="1.0",
@@ -96,7 +96,7 @@ def test_m3_foundation_and_baseline_schemas_validate_cleanly() -> None:
     entry = BaselineEntry(
         name="default",
         run_id="run-001",
-        pinned_at=datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc),
+        pinned_at=datetime(2026, 11, 18, 12, 0, tzinfo=UTC),
         note="release baseline",
         tags=["release", "v1"],
         dataset_id="ds-main",

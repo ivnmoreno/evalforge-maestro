@@ -10,7 +10,7 @@ import threading
 import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO
 
@@ -276,7 +276,7 @@ class LocalRunStore:
         entry = BaselineEntry(
             name=safe_name,
             run_id=record.run_id,
-            pinned_at=datetime.now(timezone.utc),
+            pinned_at=datetime.now(UTC),
             note=note,
             tags=cleaned_tags,
             dataset_id=record.dataset_id,

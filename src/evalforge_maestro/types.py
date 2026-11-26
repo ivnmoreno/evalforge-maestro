@@ -6,7 +6,7 @@ import json
 import math
 import re
 from collections.abc import Callable, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 from urllib.parse import urlparse
@@ -1012,8 +1012,8 @@ class RunRecord(_StrictModel):
     @classmethod
     def _normalize_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @field_validator("evaluated_case_count", "max_dataset_cases", "seed", mode="before")
     @classmethod
@@ -1055,8 +1055,8 @@ class RunManifestEntry(_StrictModel):
     @classmethod
     def _normalize_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @classmethod
     def from_run_record(cls, record: RunRecord) -> RunManifestEntry:
@@ -1393,8 +1393,8 @@ class BaselineEntry(_StrictModel):
     @classmethod
     def _normalize_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @field_validator(
         "note",
@@ -1760,8 +1760,8 @@ class TrendDataPoint(_StrictModel):
     @classmethod
     def _normalize_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @field_validator("index", mode="before")
     @classmethod
@@ -2819,8 +2819,8 @@ class ReportDocument(_StrictModel):
     @classmethod
     def _normalize_generated_at(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @model_validator(mode="after")
     def _validate_kind_alignment(self) -> ReportDocument:
@@ -2961,8 +2961,8 @@ class RunQueryFilter(_StrictModel):
         if value is None:
             return None
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @model_validator(mode="after")
     def _validate_cross_fields(self) -> RunQueryFilter:
@@ -3053,8 +3053,8 @@ class IndexedRunSummary(_StrictModel):
     @classmethod
     def _normalize_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @field_validator("aggregate_scores", mode="before")
     @classmethod
@@ -3095,8 +3095,8 @@ class IndexedCaseMetricRow(_StrictModel):
     @classmethod
     def _normalize_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @field_validator("score", mode="before")
     @classmethod
@@ -3131,8 +3131,8 @@ class IndexedMetricPoint(_StrictModel):
     @classmethod
     def _normalize_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @field_validator("mean_score", mode="before")
     @classmethod

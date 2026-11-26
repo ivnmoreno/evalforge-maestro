@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -94,7 +94,7 @@ def _make_run(
     )
     return EvalRunRecord(
         run_id=run_id,
-        timestamp=datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 11, 20, 12, 0, tzinfo=UTC),
         package_version="0.2.0",
         dataset_id="stat-ds",
         dataset_fingerprint=dataset_fp,

@@ -7,7 +7,7 @@ import json
 import os
 import sys
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -374,8 +374,7 @@ def _handle_run(
         f"Starting evaluation run over dataset {dataset.dataset_id!r} (repeats={resolved.repeats})."
     )
     base_cohort_id = (
-        resolved.run_id
-        or f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:6]}"
+        resolved.run_id or f"run-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:6]}"
     )
     candidate_runs: list[RunRecord] = []
     for idx in range(resolved.repeats):

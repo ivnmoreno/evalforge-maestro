@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -35,7 +35,7 @@ def _run_cli(argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, 
 
 def _seed_store(root: Path) -> dict[str, str]:
     store = LocalRunStore(root)
-    t0 = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
     specs = [
         ("run-a", t0, "ds-alpha", "glm-5.3", 0.9, False),
         ("run-b", t0 + timedelta(minutes=10), "ds-alpha", "glm-5.3", 0.4, True),
