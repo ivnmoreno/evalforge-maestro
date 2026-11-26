@@ -252,7 +252,24 @@ jobs:
         run: |
           uv sync --frozen --extra dev --extra docpipe-maestro
           uv run pytest --strict-markers -W error tests/test_library_purity.py
-          uv run python -c "import sys, evalforge_maestro; assert 'docpipe_maestro' not in sys.modules; adapter = evalforge_maestro.DocpipeAdapter(mode='retrieve'); assert 'docpipe_maestro' in sys.modules"
+          uv run python - <<'PY'
+          import importlib.metadata
+          import re
+          import sys
+          import evalforge_maestro
+
+          assert "docpipe_maestro" not in sys.modules
+          raw_ver = importlib.metadata.version("docpipe-maestro")
+          m = re.match(r"(\d+)\.(\d+)\.(\d+)", raw_ver)
+          assert m is not None, f"Unexpected docpipe-maestro version format: {raw_ver!r}"
+          parsed = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+          assert parsed >= (0, 5, 0), f"Expected docpipe-maestro>=0.5.0, got {raw_ver!r}"
+
+          ret_adapter = evalforge_maestro.DocpipeAdapter(mode="retrieve")
+          ans_adapter = evalforge_maestro.DocpipeAdapter(mode="answer_detailed")
+          assert ret_adapter is not None and ans_adapter is not None
+          assert "docpipe_maestro" in sys.modules
+          PY
 
   optional-judges-compat:
     runs-on: ubuntu-latest

@@ -22,7 +22,7 @@ Before proposing a major feature or refactor, please open an issue so we can ali
 
 ## Development Setup
 
-EvalForge Maestro targets **Python 3.10–3.13** and manages dependencies with [`uv`](https://docs.astral.sh/uv/).
+EvalForge Maestro targets **Python 3.11.5+ (`3.11–3.13`)** and manages dependencies with [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/ivnmoreno/evalforge-maestro.git

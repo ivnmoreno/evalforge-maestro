@@ -1,6 +1,6 @@
 # Downstream Consumer CI & Small-Judge Calibration Guide
 
-This guide covers two critical production workflows for downstream RAG and agent repositories (such as `docpipe-maestro>=0.4.1`):
+This guide covers two critical production workflows for downstream RAG and agent repositories (such as `docpipe-maestro>=0.5.0`):
 
 1. **Hybrid Retrieval (`fts5_hybrid`) & Cross-Encoder Reranking Quality Gates** using offline CI replay fixtures (`examples/ci/evalforge-hybrid-rerank.toml`) or live `DocpipeAdapter` targets.
 2. **Small & Local Judge Calibration (`evalforge-maestro calibrate --min-agreement`)** validating that fast/low-cost judge models agree with human labels before gating pull requests.
@@ -40,7 +40,7 @@ evalforge-maestro run \
   --markdown-out hybrid-report.md > hybrid-stdout.json
 ```
 
-### 1.3 Switching to Live `docpipe-maestro>=0.4.1` Hybrid + Rerank Evaluation
+### 1.3 Switching to Live `docpipe-maestro>=0.5.0` Hybrid + Rerank Evaluation
 
 In a `docpipe-maestro` checkout with an indexed test corpus (e.g., `./.docpipe/chroma`), replace `[run].executions` with live `[target]` configuration or override directly via CLI flags:
 

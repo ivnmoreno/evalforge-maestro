@@ -11,7 +11,7 @@ dataset_version = "1.0.0"
 max_concurrency = 4
 strict = true
 
-# To run live against docpipe-maestro>=0.4.1 instead of offline replay, replace
+# To run live against docpipe-maestro>=0.5.0 instead of offline replay, replace
 # `executions` above with the live `[target]` section below:
 # [target]
 # type = "docpipe"

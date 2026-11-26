@@ -1,5 +1,5 @@
-# Offline deterministic retrieval CI template for docpipe-maestro>=0.4.1 consumers.
-# Install with: pip install "evalforge-maestro[docpipe-maestro]>=0.1.4"
+# Offline deterministic retrieval CI template for docpipe-maestro>=0.5.0 consumers.
+# Install with: pip install "evalforge-maestro[docpipe-maestro]"
 # Switch docpipe_mode = "answer_detailed" and add text/judge metrics under [metrics]
 # when evaluating full RAG synthesis instead of retrieval-only gating.
 
