@@ -9,17 +9,25 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from evalforge_maestro import (
+    ArgumentCorrectnessMetric,
     EvaluationCase,
     ExactMatchMetric,
     ExecutionResult,
+    ExecutionSequenceMetric,
+    ExpectedToolCall,
+    FailureRecoveryMetric,
     HitRateAtKMetric,
     HumanCalibrationSample,
     MRRMetric,
     NDCGAtKMetric,
+    PolicyComplianceMetric,
     PrecisionAtKMetric,
     QualityGate,
     RecallAtKMetric,
     RetrievedChunk,
+    ToolCallRecord,
+    ToolEfficiencyMetric,
+    ToolSelectionMetric,
     calibrate_judge,
 )
 from evalforge_maestro.regression.stats import (
@@ -40,6 +48,7 @@ GOLDEN_CALIBRATION_ORACLE_PATH = (
 GOLDEN_STATS_ORACLE_PATH = (
     Path(__file__).resolve().parent / "golden" / "statistical_inference_oracle.json"
 )
+GOLDEN_AGENT_ORACLE_PATH = Path(__file__).resolve().parent / "golden" / "agent_metrics_oracle.json"
 FORBIDDEN_ARCHIVE_FILENAMES = frozenset({"lean-toolchain", "lakefile.toml"})
 FORBIDDEN_ARCHIVE_DIRS = frozenset({"formal", "agy-logs"})
 FORBIDDEN_RUNTIME_MARKERS = (
@@ -47,6 +56,7 @@ FORBIDDEN_RUNTIME_MARKERS = (
     "evalforge-retrieval-oracle",
     "evalforge-calibration-oracle",
     "evalforge-stats-oracle",
+    "evalforge-agent-oracle",
     "lean-toolchain",
     "lakefile.toml",
 )
@@ -156,6 +166,11 @@ def test_offline_golden_artifacts_and_runtime_metrics_work_without_lean() -> Non
     assert len(stats_golden["cohort_dispatch_matrix"]) == 16
     assert len(stats_golden["gate_escalation_truth_table"]) == 8
 
+    agent_golden = json.loads(GOLDEN_AGENT_ORACLE_PATH.read_text(encoding="utf-8"))
+    assert agent_golden["schema_version"] == "1.0"
+    assert len(agent_golden["threshold_resolution_vectors"]) == 4
+    assert len(agent_golden["canonical_vectors"]) == 20
+
     case = EvaluationCase(id="offline-1", input="q", expected_context=["d1"])
     execution = ExecutionResult(
         case_id="offline-1",
@@ -190,3 +205,21 @@ def test_offline_golden_artifacts_and_runtime_metrics_work_without_lean() -> Non
     assert paired_res.statistically_significant is True
     welch_res = compute_welch_run_statistics([0.9, 0.9, 0.9], [0.5, 0.52, 0.51])
     assert welch_res.degrees_of_freedom == 2.0
+
+    agent_case = EvaluationCase(
+        id="agent-off-1",
+        input="find rag docs",
+        expected_tools=[ExpectedToolCall(name="search", arguments={"q": "rag"})],
+    )
+    agent_exec = ExecutionResult(
+        case_id="agent-off-1",
+        input="find rag docs",
+        tool_calls=[ToolCallRecord(id="c1", name="search", arguments={"q": "rag"})],
+        elapsed_seconds=0.01,
+    )
+    assert ToolSelectionMetric().evaluate(agent_case, agent_exec).score == 1.0
+    assert ArgumentCorrectnessMetric().evaluate(agent_case, agent_exec).score == 1.0
+    assert ExecutionSequenceMetric().evaluate(agent_case, agent_exec).score == 1.0
+    assert ToolEfficiencyMetric().evaluate(agent_case, agent_exec).score == 1.0
+    assert PolicyComplianceMetric().evaluate(agent_case, agent_exec).score == 1.0
+    assert FailureRecoveryMetric().evaluate(agent_case, agent_exec).score is None

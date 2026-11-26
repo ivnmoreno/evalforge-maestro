@@ -133,6 +133,7 @@ jobs:
           ./formal/.lake/build/bin/evalforge-retrieval-oracle export-golden | diff -u tests/conformance/golden/retrieval_metrics_oracle.json -
           ./formal/.lake/build/bin/evalforge-calibration-oracle export-golden | diff -u tests/conformance/golden/judge_calibration_oracle.json -
           ./formal/.lake/build/bin/evalforge-stats-oracle export-golden | diff -u tests/conformance/golden/statistical_inference_oracle.json -
+          ./formal/.lake/build/bin/evalforge-agent-oracle export-golden | diff -u tests/conformance/golden/agent_metrics_oracle.json -
           uv run pytest --strict-markers -W error --lean-live-oracle tests/conformance/
 
   publish-testpypi:

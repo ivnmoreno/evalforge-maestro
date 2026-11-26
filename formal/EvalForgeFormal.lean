@@ -16,3 +16,7 @@ import EvalForgeFormal.Stats.ExactAlgebra
 import EvalForgeFormal.Stats.Types
 import EvalForgeFormal.Stats.Inference
 import EvalForgeFormal.Stats.Properties
+import EvalForgeFormal.Agent.Types
+import EvalForgeFormal.Agent.Preparation
+import EvalForgeFormal.Agent.Metrics
+import EvalForgeFormal.Agent.Properties
