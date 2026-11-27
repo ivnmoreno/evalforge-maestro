@@ -1,7 +1,7 @@
 # `intent.md` — EvalForge Maestro: LLM Evaluation & Regression Engine
 
 > **Historical Architectural Charter (M1–M5 Baseline):** This document preserves the original project-kickoff charter and scope tiebreakers (`v1.4`).
-> For **`v0.3.0`** shipped status covering M1–M6 and post-M6 extensions (`007`–`010`), see [`docs/future-features.md`](future-features.md).
+> For current shipped status covering M1–M6, post-M6 extensions, and Formal Assurance Layer Increments 1–6, see [`docs/future-features.md`](future-features.md).
 > Items marked `New Project (Greenfield)` or `Deferred to Post-MVP` below reflect initial MVP scoping rather than current capabilities.
 
 **Document Status:** Final Baseline Intent & Quality Specification (v1.4)  
